@@ -125,7 +125,9 @@ DB_PORT=5432
 DB_NAME=openzosma
 DB_USER=openzosma
 DB_PASS=openzosma
-# Or set DATABASE_URL directly (takes precedence over DB_* vars)
+DB_POOL_SIZE=10
+# Or set DATABASE_URL directly (takes precedence over DB_* vars), for example:
+# DATABASE_URL=postgres://openzosma:openzosma@localhost:5432/openzosma
 
 # Auth
 BETTER_AUTH_SECRET=<random-secret>
@@ -153,6 +155,7 @@ VALKEY_URL=redis://localhost:6379
 RABBITMQ_URL=amqp://openzosma:openzosma@localhost:5672
 
 # gRPC
+ORCHESTRATOR_GRPC_HOST=0.0.0.0
 ORCHESTRATOR_GRPC_PORT=50051
 SANDBOX_GRPC_PORT=50052
 

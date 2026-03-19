@@ -46,7 +46,7 @@ git clone https://github.com/zosmaai/openzosma.git
 cd openzosma
 pnpm install
 
-# Start PostgreSQL (with pgvector)
+# Start services: PostgreSQL (with pgvector), Valkey, and RabbitMQ
 docker compose up -d
 
 # Configure environment
