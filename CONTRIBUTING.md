@@ -129,7 +129,10 @@ DB_PASS=openzosma
 
 # Auth
 BETTER_AUTH_SECRET=<random-secret>
-ENCRYPTION_KEY=<32-char-hex-string>
+# ENCRYPTION_KEY can be either:
+# - a 64-char hex string (used directly as a 32-byte key), or
+# - any other passphrase (a key will be derived from it)
+ENCRYPTION_KEY=<64-char-hex-string-or-passphrase>
 
 # Web app
 NEXT_PUBLIC_BASE_URL=http://localhost:3000
