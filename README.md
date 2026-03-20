@@ -30,6 +30,9 @@ You (from your phone, WhatsApp, or Slack)
 
 Agents don't replace your team. They handle the routine lookups, status checks, data entry, and coordination that eat up your team's day -- so your people can focus on work that requires human judgment.
 
+> **Note:** The gateway `dev` script loads `../../.env` automatically via `--env-file`. If you need a different env file, run `npx tsx --env-file=<path> src/index.ts` from `packages/gateway/`. When `.env` has `DB_HOST` or `DATABASE_URL` set, the gateway connects to PostgreSQL and enables A2A per-agent routes.
+
+### Full Setup
 ## Key Features
 
 - **Hierarchical agents** -- Configure org-chart-like agent trees. Manager agents delegate to specialist agents automatically.
@@ -112,6 +115,33 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design.
 
 ## Repository Structure
 
+| Phase | Description | Duration | Status |
+|-------|-------------|----------|--------|
+| [Phase 1](./docs/PHASE-1-MULTITENANT.md) | Multi-instance pi-agent refactor (in pi-mono) | 3-4 days | Complete |
+| [Phase 2](./docs/PHASE-2-MONOREPO.md) | OpenZosma monorepo setup + DB schema + auth | 1 week | Complete |
+| [Phase 3](./docs/PHASE-3-GATEWAY.md) | API Gateway + A2A + gRPC server | 1 week | In progress (REST + A2A done, gRPC/auth pending) |
+| [Phase 4](./docs/PHASE-4-ORCHESTRATOR.md) | Orchestrator + NemoClaw sandbox integration | 1.5 weeks | Not started |
+| [Phase 5](./docs/PHASE-5-ADAPTERS.md) | Channel adapters (Slack, WhatsApp) | 1 week | Not started |
+| [Phase 6](./docs/PHASE-6-SKILLS.md) | Enterprise skills (database tool, reports) | 2 weeks | Not started |
+| [Phase 7](./docs/PHASE-7-DASHBOARD.md) | Web dashboard (Next.js) | 2 weeks | In progress (MVP) |
+
+**MVP (Phases 1-4):** ~4 weeks
+**Full platform (Phases 1-7):** ~10 weeks
+
+## Gateway API
+
+The gateway (`packages/gateway/`) exposes REST, WebSocket, and A2A protocol endpoints on port 4000. See [PHASE-3-GATEWAY.md](./docs/PHASE-3-GATEWAY.md) for the full spec.
+
+## Self-Hosted
+
+One instance = one organization. Deploy with Docker Compose for development or Kubernetes for production.
+
+## Related Repositories
+
+- **[pi-mono](https://github.com/badlogic/pi-mono)** -- Agent SDK. Published as npm packages (`pi-ai`, `pi-agent-core`, `pi-coding-agent`, etc.). OpenZosma depends on these packages.
+- **[NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw)** -- Sandbox runtime. Runs agents inside OpenShell sandboxes with Landlock + seccomp + network namespace isolation, deny-by-default network policies, and inference routing.
+- **[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell)** -- Underlying sandbox infrastructure. K3s-based isolation with declarative YAML policies.
+- **[Google A2A](https://github.com/google/A2A)** -- Agent-to-Agent protocol. JSON-RPC 2.0 over HTTPS with SSE streaming and gRPC support.
 ```
 openzosma/
   apps/
