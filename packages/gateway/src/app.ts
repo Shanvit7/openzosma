@@ -5,7 +5,8 @@ import { streamSSE } from "hono/streaming"
 import type { Pool } from "@openzosma/db"
 import { agentConfigQueries, apiKeyQueries } from "@openzosma/db"
 import type { SessionManager } from "./session-manager.js"
-import { buildDefaultAgentCard, createPerAgentRouter } from "./a2a.js"
+import { buildDefaultAgentCard } from "@openzosma/a2a"
+import { createPerAgentRouter } from "./a2a.js"
 
 export function createApp(sessionManager: SessionManager, pool?: Pool): Hono {
 	const app = new Hono()
