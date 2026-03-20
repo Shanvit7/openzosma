@@ -72,9 +72,9 @@ export class SessionManager {
 		// Use pre-resolved config when available to avoid a redundant DB fetch.
 		// Fall back to a DB lookup when only agentConfigId is given, or to
 		// env-based defaults when neither is provided.
-		let agentConfig: { provider?: string; model?: string; systemPrompt?: string | null; toolsEnabled?: string[] } = {}
+		let agentConfig: { provider?: string; model?: string; systemPrompt?: string; toolsEnabled?: string[] } = {}
 		if (resolvedConfig) {
-			agentConfig = resolvedConfig
+			agentConfig = { ...resolvedConfig, systemPrompt: resolvedConfig.systemPrompt ?? undefined }
 		} else if (agentConfigId && this.pool) {
 			const config = await agentConfigQueries.getAgentConfig(this.pool, agentConfigId)
 			if (config) {
