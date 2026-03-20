@@ -1,130 +1,89 @@
 /**
- * A2A Protocol implementation — Agent Card + JSON-RPC 2.0 endpoint.
+ * A2A Protocol implementation using the a2a-js SDK.
  *
- * Spec: https://google.github.io/A2A/
+ * Each agent_configs row is exposed as a separate A2A agent with its own
+ * Agent Card and JSON-RPC endpoint. External A2A callers discover agents
+ * via the card listing and address them directly by config ID.
  *
- * Task <-> Session mapping:
- *   - A2A Task ID  = OpenZosma Session ID
- *   - submitted    = session created, message queued
- *   - working      = agent is processing
- *   - completed    = agent finished successfully
- *   - failed       = agent error
- *   - canceled     = user canceled via tasks/cancel
- *
- * Agent Card:
- *   Each agent_configs row is one skill on the card. The row's `name` and
- *   `description` fields are used directly — no hardcoded metadata map.
- *
- * Agent targeting:
- *   Callers may pass `agentConfigId` in task params to route the task to a
- *   specific agent config. Omitting it routes to the default agent.
+ * URL structure:
+ *   GET  /a2a/agents                         — list all agent cards
+ *   GET  /a2a/agents/:configId/agent.json    — card for one agent
+ *   POST /a2a/agents/:configId               — JSON-RPC 2.0 endpoint
+ *   GET  /.well-known/agent.json             — default (first) agent card
  */
 
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
-import type { Context } from "hono"
 import type { Pool } from "@openzosma/db"
+import type { AgentConfig } from "@openzosma/db"
 import { agentConfigQueries, settingQueries } from "@openzosma/db"
 import type { SessionManager } from "./session-manager.js"
+import type {
+	AgentCard,
+	AgentSkill,
+	Task,
+	SendMessageRequest,
+	SendMessageResponse,
+	SendMessageStreamingRequest,
+	SendMessageStreamingResponse,
+	CancelTaskRequest,
+	CancelTaskResponse,
+	TaskResubscriptionRequest,
+	JSONRPCRequest,
+} from "a2a-js"
+import {
+	Role,
+	TaskState,
+	DefaultA2ARequestHandler,
+	OperationNotSupportedError,
+	JSONRPCErrorCode,
+} from "a2a-js"
+import type { AgentExecutor } from "a2a-js"
 
 // ---------------------------------------------------------------------------
-// A2A types
+// Skill metadata
 // ---------------------------------------------------------------------------
 
-type TaskStatus = "submitted" | "working" | "completed" | "failed" | "canceled"
-
-interface TextPart {
-	type: "text"
-	text: string
+const SKILL_METADATA: Record<string, Omit<AgentSkill, "id">> = {
+	coding: {
+		name: "Coding Assistant",
+		description: "Read, write, and edit code. Execute commands. Debug issues.",
+	},
+	database: {
+		name: "Database Querying",
+		description: "Query PostgreSQL, MySQL, MongoDB, ClickHouse, BigQuery, and SQLite databases.",
+	},
+	reports: {
+		name: "Report Generation",
+		description: "Generate PDF reports, PPTX presentations, and data visualizations.",
+	},
 }
-
-interface A2AMessage {
-	role: "user" | "agent"
-	parts: TextPart[]
-}
-
-interface TaskState {
-	id: string
-	sessionId: string
-	agentConfigId: string | undefined
-	/**
-	 * Set when this task was spawned by another task (delegation).
-	 * Kept on the state so taskView can surface it to the A2A caller for
-	 * debugging. To hide sub-tasks from callers later, remove this field
-	 * from taskView() — the state itself stays intact for internal tracking.
-	 */
-	parentTaskId?: string
-	status: TaskStatus
-	messages: A2AMessage[]
-	abort?: AbortController
-	pushNotificationUrl?: string
-	pushNotificationCredentials?: string
-}
-
-interface JsonRpcRequest {
-	jsonrpc: "2.0"
-	id: string | number | null
-	method: string
-	params?: unknown
-}
-
-// JSON-RPC 2.0 error codes
-const RPC_PARSE_ERROR = -32700
-const RPC_INVALID_REQUEST = -32600
-const RPC_METHOD_NOT_FOUND = -32601
-const RPC_INVALID_PARAMS = -32602
-const RPC_INTERNAL_ERROR = -32603
 
 // ---------------------------------------------------------------------------
-// Dynamic Agent Card
+// Agent Card builder — one card per agent config
 // ---------------------------------------------------------------------------
 
-export interface AgentCardSkill {
-	id: string
-	name: string
-	description: string
-}
+export async function buildAgentCardForConfig(
+	pool: Pool,
+	config: AgentConfig,
+): Promise<AgentCard> {
+	const publicUrl = await settingQueries.getSettingValue<string>(pool, "public_url")
+	const base = publicUrl ?? process.env["PUBLIC_URL"] ?? "http://localhost:4000"
 
-export interface AgentCard {
-	name: string
-	description: string
-	url: string
-	version: string
-	capabilities: {
-		streaming: boolean
-		pushNotifications: boolean
-		stateTransitionHistory: boolean
-	}
-	skills: AgentCardSkill[]
-	authentication: { schemes: string[] }
-}
-
-/**
- * Build the Agent Card from the agent_configs table.
- * Each row becomes one skill entry: id = config.id, name and description
- * come directly from the row. No hardcoded metadata.
- */
-export async function buildAgentCard(pool: Pool): Promise<AgentCard> {
-	const [configs, publicUrl, instanceName] = await Promise.all([
-		agentConfigQueries.listAgentConfigs(pool),
-		settingQueries.getSettingValue<string>(pool, "public_url"),
-		settingQueries.getSettingValue<string>(pool, "instance_name"),
-	])
-
-	const skills: AgentCardSkill[] = configs.map((c) => ({
-		id: c.id,
-		name: c.name,
-		description: c.description ?? "",
+	const skills: AgentSkill[] = config.skills.map((id) => ({
+		id,
+		name: SKILL_METADATA[id]?.name ?? id,
+		description: SKILL_METADATA[id]?.description ?? null,
 	}))
 
 	return {
-		name: instanceName ?? "OpenZosma Agent",
-		description: "Self-hosted AI agent platform",
-		url: `${publicUrl ?? process.env["PUBLIC_URL"] ?? "http://localhost:4000"}/a2a`,
+		name: config.name,
+		description: config.description ?? `Agent: ${config.name}`,
+		url: `${base}/a2a/agents/${config.id}`,
 		version: "1.0.0",
 		capabilities: {
 			streaming: true,
-			pushNotifications: true,
+			pushNotifications: false,
 			stateTransitionHistory: true,
 		},
 		skills,
@@ -132,348 +91,375 @@ export async function buildAgentCard(pool: Pool): Promise<AgentCard> {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function rpcOk(id: string | number | null, result: unknown) {
-	return { jsonrpc: "2.0" as const, id, result }
+export async function buildAllAgentCards(pool: Pool): Promise<AgentCard[]> {
+	const configs = await agentConfigQueries.listAgentConfigs(pool)
+	return Promise.all(configs.map((c) => buildAgentCardForConfig(pool, c)))
 }
 
-function rpcErr(id: string | number | null, code: number, message: string, data?: unknown) {
-	return {
-		jsonrpc: "2.0" as const,
-		id,
-		error: { code, message, ...(data !== undefined ? { data } : {}) },
+export async function buildDefaultAgentCard(pool: Pool): Promise<AgentCard | null> {
+	const configs = await agentConfigQueries.listAgentConfigs(pool)
+	if (configs.length === 0) return null
+	return buildAgentCardForConfig(pool, configs[0])
+}
+
+// ---------------------------------------------------------------------------
+// AgentExecutor — bridges a2a-js to SessionManager
+// ---------------------------------------------------------------------------
+
+function extractUserText(parts: Array<{ type: string; text?: string }>): string | null {
+	const text = parts
+		.filter((p) => p.type === "text" && typeof p.text === "string")
+		.map((p) => p.text)
+		.join("")
+	return text || null
+}
+
+class OpenZosmaAgentExecutor implements AgentExecutor {
+	private sessionManager: SessionManager
+	private agentConfigId: string
+	private resolvedConfig: {
+		provider: string
+		model: string
+		systemPrompt: string | null
+		toolsEnabled: string[]
 	}
-}
+	private abortControllers = new Map<string, AbortController>()
 
-function taskView(task: TaskState) {
-	return {
-		id: task.id,
-		// parentTaskId is included for caller visibility / debugging.
-		// To hide delegated sub-tasks from A2A callers later, remove this line.
-		...(task.parentTaskId !== undefined ? { parentTaskId: task.parentTaskId } : {}),
-		status: { state: task.status },
-		messages: task.messages,
+	constructor(
+		sessionManager: SessionManager,
+		agentConfigId: string,
+		resolvedConfig: {
+			provider: string
+			model: string
+			systemPrompt: string | null
+			toolsEnabled: string[]
+		},
+	) {
+		this.sessionManager = sessionManager
+		this.agentConfigId = agentConfigId
+		this.resolvedConfig = resolvedConfig
 	}
-}
 
-function extractId(params: unknown): string | null {
-	if (typeof params !== "object" || params === null) return null
-	const id = (params as Record<string, unknown>)["id"]
-	return typeof id === "string" ? id : null
-}
-
-function extractAgentConfigId(params: unknown): string | undefined {
-	if (typeof params !== "object" || params === null) return undefined
-	const v = (params as Record<string, unknown>)["agentConfigId"]
-	return typeof v === "string" ? v : undefined
-}
-
-function extractParentTaskId(params: unknown): string | undefined {
-	if (typeof params !== "object" || params === null) return undefined
-	const v = (params as Record<string, unknown>)["parentTaskId"]
-	return typeof v === "string" ? v : undefined
-}
-
-function extractUserText(params: unknown): string | null {
-	if (typeof params !== "object" || params === null) return null
-	const msg = (params as Record<string, unknown>)["message"]
-	if (typeof msg !== "object" || msg === null) return null
-	const parts = (msg as Record<string, unknown>)["parts"]
-	if (!Array.isArray(parts)) return null
-	return (
-		parts
-			.filter(
-				(p): p is TextPart =>
-					typeof p === "object" &&
-					p !== null &&
-					(p as Record<string, unknown>)["type"] === "text",
-			)
-			.map((p) => p.text)
-			.join("") || null
-	)
-}
-
-function getOrCreateTask(
-	tasks: Map<string, TaskState>,
-	taskId: string,
-	userText: string,
-	agentConfigId: string | undefined,
-	parentTaskId?: string,
-): TaskState {
-	const existing = tasks.get(taskId)
-	if (existing) return existing
-	const task: TaskState = {
-		id: taskId,
-		sessionId: taskId,
-		agentConfigId,
-		...(parentTaskId !== undefined ? { parentTaskId } : {}),
-		status: "submitted",
-		messages: [{ role: "user", parts: [{ type: "text", text: userText }] }],
+	cancelTask(taskId: string): void {
+		const ctrl = this.abortControllers.get(taskId)
+		if (ctrl) {
+			ctrl.abort()
+			this.abortControllers.delete(taskId)
+		}
 	}
-	tasks.set(taskId, task)
-	return task
-}
 
-// ---------------------------------------------------------------------------
-// Method: tasks/send — blocking, returns final result
-// ---------------------------------------------------------------------------
-
-async function handleTasksSend(
-	tasks: Map<string, TaskState>,
-	rpcId: string | number | null,
-	params: unknown,
-	sessionManager: SessionManager,
-	c: Context,
-): Promise<Response> {
-	const taskId = extractId(params)
-	if (!taskId) return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "params.id is required"))
-
-	const userText = extractUserText(params)
-	if (!userText) return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "params.message must have at least one text part"))
-
-	const agentConfigId = extractAgentConfigId(params)
-	const parentTaskId = extractParentTaskId(params)
-	const task = getOrCreateTask(tasks, taskId, userText, agentConfigId, parentTaskId)
-	task.status = "working"
-
-	const abort = new AbortController()
-	task.abort = abort
-
-	// Ensure session exists and is bound to the right agent config.
-	// createSession fetches the AgentConfig from DB when agentConfigId is set.
-	await sessionManager.createSession(task.sessionId, task.agentConfigId)
-
-	let assistantText = ""
-
-	try {
-		for await (const event of sessionManager.sendMessage(task.sessionId, userText, abort.signal)) {
-			if (event.type === "message_update" && event.text) {
-				assistantText += event.text
+	async onMessageSend(
+		request: SendMessageRequest,
+		task?: Task,
+	): Promise<SendMessageResponse> {
+		const params = request.params as unknown as Record<string, unknown>
+		const taskId = (params["id"] as string | undefined) ?? task?.id
+		if (!taskId) {
+			return {
+				jsonrpc: "2.0",
+				id: request.id,
+				error: { code: JSONRPCErrorCode.InvalidParams, message: "Task ID is required" },
 			}
 		}
 
-		task.status = "completed"
-		task.messages.push({ role: "agent", parts: [{ type: "text", text: assistantText }] })
-		task.abort = undefined
+		const message = params["message"] as { parts?: Array<{ type: string; text?: string }> } | undefined
+		const userText = message?.parts ? extractUserText(message.parts) : null
+		if (!userText) {
+			return {
+				jsonrpc: "2.0",
+				id: request.id,
+				error: { code: JSONRPCErrorCode.InvalidParams, message: "Message must have at least one text part" },
+			}
+		}
 
-		return c.json(rpcOk(rpcId, taskView(task)))
-	} catch (e) {
-		task.status = abort.signal.aborted ? "canceled" : "failed"
-		task.abort = undefined
-		return c.json(rpcErr(rpcId, RPC_INTERNAL_ERROR, e instanceof Error ? e.message : String(e)))
-	}
-}
+		await this.sessionManager.createSession(taskId, this.agentConfigId, this.resolvedConfig)
 
-// ---------------------------------------------------------------------------
-// Method: tasks/sendSubscribe — SSE stream of task updates
-// ---------------------------------------------------------------------------
-
-async function handleTasksSendSubscribe(
-	tasks: Map<string, TaskState>,
-	rpcId: string | number | null,
-	params: unknown,
-	sessionManager: SessionManager,
-	c: Context,
-): Promise<Response> {
-	const taskId = extractId(params)
-	if (!taskId) return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "params.id is required"))
-
-	const userText = extractUserText(params)
-	if (!userText) return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "params.message must have at least one text part"))
-
-	const agentConfigId = extractAgentConfigId(params)
-	const parentTaskId = extractParentTaskId(params)
-	const task = getOrCreateTask(tasks, taskId, userText, agentConfigId, parentTaskId)
-	task.status = "working"
-
-	const abort = new AbortController()
-	task.abort = abort
-
-	await sessionManager.createSession(task.sessionId, task.agentConfigId)
-
-	return streamSSE(c, async (stream) => {
-		stream.onAbort(() => abort.abort())
-
-		await stream.writeSSE({ data: JSON.stringify({ id: taskId, status: { state: "working" } }) })
+		const abort = new AbortController()
+		this.abortControllers.set(taskId, abort)
 
 		let assistantText = ""
 
 		try {
-			for await (const event of sessionManager.sendMessage(task.sessionId, userText, abort.signal)) {
+			for await (const event of this.sessionManager.sendMessage(taskId, userText, abort.signal)) {
 				if (event.type === "message_update" && event.text) {
 					assistantText += event.text
-					await stream.writeSSE({
-						data: JSON.stringify({
-							id: taskId,
-							status: { state: "working" },
-							delta: { type: "text", text: event.text },
-						}),
-					})
+				}
+			}
+		} catch (e) {
+			this.abortControllers.delete(taskId)
+			const resultTask: Task = {
+				id: taskId,
+				sessionId: taskId,
+				status: {
+					state: abort.signal.aborted ? TaskState.Canceled : TaskState.Failed,
+					message: {
+						role: Role.Agent,
+						parts: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
+					},
+				},
+			}
+			return { jsonrpc: "2.0", id: request.id, result: resultTask }
+		}
+
+		this.abortControllers.delete(taskId)
+
+		const resultTask: Task = {
+			id: taskId,
+			sessionId: taskId,
+			status: { state: TaskState.Completed },
+			history: [
+				{ role: Role.User, parts: [{ type: "text", text: userText }] },
+				{ role: Role.Agent, parts: [{ type: "text", text: assistantText }] },
+			],
+		}
+
+		return { jsonrpc: "2.0", id: request.id, result: resultTask }
+	}
+
+	async *onMessageStream(
+		request: SendMessageStreamingRequest,
+		task?: Task,
+	): AsyncGenerator<SendMessageStreamingResponse, void, unknown> {
+		const params = request.params as unknown as Record<string, unknown>
+		const taskId = (params["id"] as string | undefined) ?? task?.id
+		if (!taskId) {
+			yield {
+				jsonrpc: "2.0",
+				id: request.id,
+				error: { code: JSONRPCErrorCode.InvalidParams, message: "Task ID is required" },
+			}
+			return
+		}
+
+		const message = params["message"] as { parts?: Array<{ type: string; text?: string }> } | undefined
+		const userText = message?.parts ? extractUserText(message.parts) : null
+		if (!userText) {
+			yield {
+				jsonrpc: "2.0",
+				id: request.id,
+				error: { code: JSONRPCErrorCode.InvalidParams, message: "Message must have at least one text part" },
+			}
+			return
+		}
+
+		await this.sessionManager.createSession(taskId, this.agentConfigId, this.resolvedConfig)
+
+		const abort = new AbortController()
+		this.abortControllers.set(taskId, abort)
+
+		yield {
+			jsonrpc: "2.0",
+			id: request.id,
+			result: {
+				role: Role.Agent,
+				parts: [{ type: "text", text: "" }],
+				metadata: { taskId, state: TaskState.Working },
+			},
+		}
+
+		let assistantText = ""
+
+		try {
+			for await (const event of this.sessionManager.sendMessage(taskId, userText, abort.signal)) {
+				if (event.type === "message_update" && event.text) {
+					assistantText += event.text
+					yield {
+						jsonrpc: "2.0",
+						id: request.id,
+						result: {
+							role: Role.Agent,
+							parts: [{ type: "text", text: event.text }],
+							metadata: { taskId, state: TaskState.Working },
+						},
+					}
 				}
 			}
 
-			task.status = "completed"
-			task.messages.push({ role: "agent", parts: [{ type: "text", text: assistantText }] })
-			task.abort = undefined
-
-			await stream.writeSSE({
-				data: JSON.stringify({ id: taskId, status: { state: "completed" }, messages: task.messages }),
-			})
+			yield {
+				jsonrpc: "2.0",
+				id: request.id,
+				result: {
+					role: Role.Agent,
+					parts: [{ type: "text", text: assistantText }],
+					metadata: { taskId, state: TaskState.Completed, final: true },
+				},
+			}
 		} catch (e) {
-			task.status = abort.signal.aborted ? "canceled" : "failed"
-			task.abort = undefined
-			await stream.writeSSE({
-				data: JSON.stringify({
-					id: taskId,
-					status: { state: task.status },
-					error: e instanceof Error ? e.message : String(e),
-				}),
-			})
+			const state = abort.signal.aborted ? TaskState.Canceled : TaskState.Failed
+			yield {
+				jsonrpc: "2.0",
+				id: request.id,
+				result: {
+					role: Role.Agent,
+					parts: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
+					metadata: { taskId, state, final: true },
+				},
+			}
+		} finally {
+			this.abortControllers.delete(taskId)
 		}
+	}
+
+	async onCancel(
+		request: CancelTaskRequest,
+		task: Task,
+	): Promise<CancelTaskResponse> {
+		this.cancelTask(task.id)
+		const updated: Task = {
+			...task,
+			status: { state: TaskState.Canceled },
+		}
+		return { jsonrpc: "2.0", id: request.id, result: updated }
+	}
+
+	async *onResubscribe(
+		_request: TaskResubscriptionRequest,
+		_task: Task,
+	): AsyncGenerator<SendMessageStreamingResponse, void, unknown> {
+		yield {
+			jsonrpc: "2.0",
+			id: _request.id,
+			error: new OperationNotSupportedError(),
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Per-agent handler cache
+// ---------------------------------------------------------------------------
+
+interface AgentHandler {
+	requestHandler: DefaultA2ARequestHandler
+	executor: OpenZosmaAgentExecutor
+}
+
+function getOrCreateHandler(
+	handlers: Map<string, AgentHandler>,
+	configId: string,
+	config: AgentConfig,
+	sessionManager: SessionManager,
+): AgentHandler {
+	const existing = handlers.get(configId)
+	if (existing) return existing
+
+	const executor = new OpenZosmaAgentExecutor(sessionManager, configId, {
+		provider: config.provider,
+		model: config.model,
+		systemPrompt: config.systemPrompt,
+		toolsEnabled: config.toolsEnabled,
 	})
+	const requestHandler = new DefaultA2ARequestHandler(executor)
+	const handler: AgentHandler = { requestHandler, executor }
+	handlers.set(configId, handler)
+	return handler
 }
 
 // ---------------------------------------------------------------------------
-// Method: tasks/get
+// Hono Router
 // ---------------------------------------------------------------------------
 
-function handleTasksGet(tasks: Map<string, TaskState>, rpcId: string | number | null, params: unknown, c: Context): Response {
-	const taskId = extractId(params)
-	if (!taskId) return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "params.id is required"))
-
-	const task = tasks.get(taskId)
-	if (!task) return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, `Task ${taskId} not found`))
-
-	return c.json(rpcOk(rpcId, taskView(task)))
-}
-
-// ---------------------------------------------------------------------------
-// Method: tasks/cancel
-// ---------------------------------------------------------------------------
-
-function handleTasksCancel(tasks: Map<string, TaskState>, rpcId: string | number | null, params: unknown, c: Context): Response {
-	const taskId = extractId(params)
-	if (!taskId) return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "params.id is required"))
-
-	const task = tasks.get(taskId)
-	if (!task) return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, `Task ${taskId} not found`))
-
-	task.abort?.abort()
-	task.abort = undefined
-	task.status = "canceled"
-
-	return c.json(rpcOk(rpcId, taskView(task)))
-}
-
-// ---------------------------------------------------------------------------
-// Method: tasks/pushNotification/set
-// ---------------------------------------------------------------------------
-
-function handlePushNotificationSet(tasks: Map<string, TaskState>, rpcId: string | number | null, params: unknown, c: Context): Response {
-	const taskId = extractId(params)
-	if (!taskId) return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "params.id is required"))
-
-	if (typeof params !== "object" || params === null) {
-		return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "params must be an object"))
-	}
-
-	const cfg = (params as Record<string, unknown>)["pushNotificationConfig"]
-	if (typeof cfg !== "object" || cfg === null) {
-		return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "params.pushNotificationConfig is required"))
-	}
-
-	const url = (cfg as Record<string, unknown>)["url"]
-	if (typeof url !== "string") {
-		return c.json(rpcErr(rpcId, RPC_INVALID_PARAMS, "pushNotificationConfig.url must be a string"))
-	}
-
-	let task = tasks.get(taskId)
-	if (!task) {
-		task = {
-			id: taskId,
-			sessionId: taskId,
-			agentConfigId: undefined,
-			status: "submitted",
-			messages: [],
-		}
-		tasks.set(taskId, task)
-	}
-
-	task.pushNotificationUrl = url
-
-	const auth = (cfg as Record<string, unknown>)["authentication"]
-	if (typeof auth === "object" && auth !== null) {
-		const credentials = (auth as Record<string, unknown>)["credentials"]
-		if (typeof credentials === "string") task.pushNotificationCredentials = credentials
-	}
-
-	return c.json(rpcOk(rpcId, { id: taskId, pushNotificationConfig: { url } }))
-}
-
-// ---------------------------------------------------------------------------
-// Router
-// ---------------------------------------------------------------------------
-
-export function createA2ARouter(sessionManager: SessionManager, pool: Pool): Hono {
-	// Task registry scoped to this router instance — no module-level state.
-	const tasks = new Map<string, TaskState>()
-
-	// Delegation hook — future agent tool for spawning sub-tasks:
-	//
-	//   async function spawnSubTask(parentTaskId: string, agentConfigId: string, message: string): Promise<TaskState>
-	//
-	// The spawned task is created with `parentTaskId` set so it appears in
-	// taskView. To hide sub-tasks from A2A callers later, remove parentTaskId
-	// from taskView() without touching this spawn path.
-
+export function createPerAgentRouter(sessionManager: SessionManager, pool: Pool): Hono {
+	const handlers = new Map<string, AgentHandler>()
 	const router = new Hono()
 
-	// Agent Card — served here too so /a2a and /.well-known/agent.json both work
-	router.get("/agent.json", async (c) => {
-		const card = await buildAgentCard(pool)
+	// List all agent cards
+	router.get("/agents", async (c) => {
+		const cards = await buildAllAgentCards(pool)
+		return c.json(cards)
+	})
+
+	// Per-agent card
+	router.get("/agents/:configId/agent.json", async (c) => {
+		const configId = c.req.param("configId")
+		const config = await agentConfigQueries.getAgentConfig(pool, configId)
+		if (!config) {
+			return c.json({ error: "Agent not found" }, 404)
+		}
+		const card = await buildAgentCardForConfig(pool, config)
 		return c.json(card)
 	})
 
-	router.post("/", async (c) => {
+	// Per-agent JSON-RPC endpoint
+	router.post("/agents/:configId", async (c) => {
+		const configId = c.req.param("configId")
+		const config = await agentConfigQueries.getAgentConfig(pool, configId)
+		if (!config) {
+			return c.json(
+				{ jsonrpc: "2.0", id: null, error: { code: JSONRPCErrorCode.InvalidParams, message: "Agent not found" } },
+				404,
+			)
+		}
+
 		let body: unknown
 		try {
 			body = await c.req.json()
 		} catch {
-			return c.json(rpcErr(null, RPC_PARSE_ERROR, "Parse error"), 400)
+			return c.json(
+				{ jsonrpc: "2.0", id: null, error: { code: JSONRPCErrorCode.ParseError, message: "Parse error" } },
+				400,
+			)
 		}
 
 		if (typeof body !== "object" || body === null) {
-			return c.json(rpcErr(null, RPC_INVALID_REQUEST, "Request must be a JSON object"), 400)
+			return c.json(
+				{ jsonrpc: "2.0", id: null, error: { code: JSONRPCErrorCode.InvalidRequest, message: "Request must be a JSON object" } },
+				400,
+			)
 		}
 
-		const req = body as Partial<JsonRpcRequest>
-
+		const req = body as Partial<JSONRPCRequest>
 		if (req.jsonrpc !== "2.0") {
-			return c.json(rpcErr(req.id ?? null, RPC_INVALID_REQUEST, 'jsonrpc must be "2.0"'), 400)
+			return c.json(
+				{ jsonrpc: "2.0", id: req.id ?? null, error: { code: JSONRPCErrorCode.InvalidRequest, message: 'jsonrpc must be "2.0"' } },
+				400,
+			)
 		}
 
 		const rpcId = req.id ?? null
 
 		if (typeof req.method !== "string") {
-			return c.json(rpcErr(rpcId, RPC_INVALID_REQUEST, "method must be a string"), 400)
+			return c.json(
+				{ jsonrpc: "2.0", id: rpcId, error: { code: JSONRPCErrorCode.InvalidRequest, message: "method must be a string" } },
+				400,
+			)
 		}
+
+		const { requestHandler } = getOrCreateHandler(handlers, configId, config, sessionManager)
+		const rpcRequest = body as JSONRPCRequest
 
 		switch (req.method) {
 			case "tasks/send":
-				return handleTasksSend(tasks, rpcId, req.params, sessionManager, c)
+			case "message/send": {
+				const response = await requestHandler.onMessageSend(rpcRequest as unknown as SendMessageRequest)
+				return c.json(response)
+			}
+
 			case "tasks/sendSubscribe":
-				return handleTasksSendSubscribe(tasks, rpcId, req.params, sessionManager, c)
-			case "tasks/get":
-				return handleTasksGet(tasks, rpcId, req.params, c)
-			case "tasks/cancel":
-				return handleTasksCancel(tasks, rpcId, req.params, c)
-			case "tasks/pushNotification/set":
-				return handlePushNotificationSet(tasks, rpcId, req.params, c)
+			case "message/sendStream": {
+				return streamSSE(c, async (stream) => {
+					const gen = requestHandler.onMessageSendStream(rpcRequest as unknown as SendMessageStreamingRequest)
+					for await (const chunk of gen) {
+						if (stream.aborted) break
+						await stream.writeSSE({ data: JSON.stringify(chunk) })
+					}
+				})
+			}
+
+			case "tasks/get": {
+				const response = await requestHandler.onGetTask(rpcRequest as Parameters<typeof requestHandler.onGetTask>[0])
+				return c.json(response)
+			}
+
+			case "tasks/cancel": {
+				const response = await requestHandler.onCancelTask(rpcRequest as unknown as CancelTaskRequest)
+				return c.json(response)
+			}
+
 			default:
-				return c.json(rpcErr(rpcId, RPC_METHOD_NOT_FOUND, `Method not found: ${req.method}`), 404)
+				return c.json(
+					{ jsonrpc: "2.0", id: rpcId, error: { code: JSONRPCErrorCode.MethodNotFound, message: `Method not found: ${req.method}` } },
+					404,
+				)
 		}
 	})
 
