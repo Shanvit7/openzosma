@@ -1,12 +1,12 @@
-import { randomBytes, createHash } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
+import { buildDefaultAgentCard } from "@openzosma/a2a"
+import type { Pool } from "@openzosma/db"
+import { agentConfigQueries, apiKeyQueries } from "@openzosma/db"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { streamSSE } from "hono/streaming"
-import type { Pool } from "@openzosma/db"
-import { agentConfigQueries, apiKeyQueries } from "@openzosma/db"
-import type { SessionManager } from "./session-manager.js"
-import { buildDefaultAgentCard } from "@openzosma/a2a"
 import { createPerAgentRouter } from "./a2a.js"
+import type { SessionManager } from "./session-manager.js"
 
 export function createApp(sessionManager: SessionManager, pool?: Pool): Hono {
 	const app = new Hono()
@@ -31,7 +31,7 @@ export function createApp(sessionManager: SessionManager, pool?: Pool): Hono {
 		return c.json({
 			name: "OpenZosma Agent",
 			description: "Self-hosted AI agent platform",
-			url: `${process.env["PUBLIC_URL"] ?? "http://localhost:4000"}/a2a/agents`,
+			url: `${process.env.PUBLIC_URL ?? "http://localhost:4000"}/a2a/agents`,
 			version: "1.0.0",
 			capabilities: { streaming: true, pushNotifications: false, stateTransitionHistory: true },
 			skills: [],

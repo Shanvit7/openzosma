@@ -11,24 +11,14 @@
  *   POST /a2a/agents/:configId               — JSON-RPC 2.0 endpoint
  */
 
-import { Hono } from "hono"
-import { streamSSE } from "hono/streaming"
+import { type AgentHandler, buildAgentCardForConfig, buildAllAgentCards, getOrCreateHandler } from "@openzosma/a2a"
+import type { A2ASessionProvider } from "@openzosma/a2a"
 import type { Pool } from "@openzosma/db"
 import { agentConfigQueries } from "@openzosma/db"
-import {
-	buildAllAgentCards,
-	buildAgentCardForConfig,
-	getOrCreateHandler,
-	type AgentHandler,
-} from "@openzosma/a2a"
-import type { A2ASessionProvider } from "@openzosma/a2a"
-import type {
-	JSONRPCRequest,
-	SendMessageRequest,
-	SendMessageStreamingRequest,
-	CancelTaskRequest,
-} from "a2a-js"
+import type { CancelTaskRequest, JSONRPCRequest, SendMessageRequest, SendMessageStreamingRequest } from "a2a-js"
 import { JSONRPCErrorCode } from "a2a-js"
+import { Hono } from "hono"
+import { streamSSE } from "hono/streaming"
 
 export function createPerAgentRouter(sessionProvider: A2ASessionProvider, pool: Pool): Hono {
 	const handlers = new Map<string, AgentHandler>()
@@ -71,7 +61,11 @@ export function createPerAgentRouter(sessionProvider: A2ASessionProvider, pool: 
 
 		if (typeof body !== "object" || body === null) {
 			return c.json(
-				{ jsonrpc: "2.0", id: null, error: { code: JSONRPCErrorCode.InvalidRequest, message: "Request must be a JSON object" } },
+				{
+					jsonrpc: "2.0",
+					id: null,
+					error: { code: JSONRPCErrorCode.InvalidRequest, message: "Request must be a JSON object" },
+				},
 				400,
 			)
 		}
@@ -79,7 +73,11 @@ export function createPerAgentRouter(sessionProvider: A2ASessionProvider, pool: 
 		const req = body as Partial<JSONRPCRequest>
 		if (req.jsonrpc !== "2.0") {
 			return c.json(
-				{ jsonrpc: "2.0", id: req.id ?? null, error: { code: JSONRPCErrorCode.InvalidRequest, message: 'jsonrpc must be "2.0"' } },
+				{
+					jsonrpc: "2.0",
+					id: req.id ?? null,
+					error: { code: JSONRPCErrorCode.InvalidRequest, message: 'jsonrpc must be "2.0"' },
+				},
 				400,
 			)
 		}
@@ -88,7 +86,11 @@ export function createPerAgentRouter(sessionProvider: A2ASessionProvider, pool: 
 
 		if (typeof req.method !== "string") {
 			return c.json(
-				{ jsonrpc: "2.0", id: rpcId, error: { code: JSONRPCErrorCode.InvalidRequest, message: "method must be a string" } },
+				{
+					jsonrpc: "2.0",
+					id: rpcId,
+					error: { code: JSONRPCErrorCode.InvalidRequest, message: "method must be a string" },
+				},
 				400,
 			)
 		}
@@ -126,7 +128,11 @@ export function createPerAgentRouter(sessionProvider: A2ASessionProvider, pool: 
 
 			default:
 				return c.json(
-					{ jsonrpc: "2.0", id: rpcId, error: { code: JSONRPCErrorCode.MethodNotFound, message: `Method not found: ${req.method}` } },
+					{
+						jsonrpc: "2.0",
+						id: rpcId,
+						error: { code: JSONRPCErrorCode.MethodNotFound, message: `Method not found: ${req.method}` },
+					},
 					404,
 				)
 		}

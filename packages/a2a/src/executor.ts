@@ -1,21 +1,15 @@
 import type { AgentConfig } from "@openzosma/db"
 import type {
-	Task,
+	CancelTaskRequest,
+	CancelTaskResponse,
 	SendMessageRequest,
 	SendMessageResponse,
 	SendMessageStreamingRequest,
 	SendMessageStreamingResponse,
-	CancelTaskRequest,
-	CancelTaskResponse,
+	Task,
 	TaskResubscriptionRequest,
 } from "a2a-js"
-import {
-	Role,
-	TaskState,
-	DefaultA2ARequestHandler,
-	OperationNotSupportedError,
-	JSONRPCErrorCode,
-} from "a2a-js"
+import { DefaultA2ARequestHandler, JSONRPCErrorCode, OperationNotSupportedError, Role, TaskState } from "a2a-js"
 import type { AgentExecutor } from "a2a-js"
 import type { A2ASessionProvider } from "./types.js"
 
@@ -61,12 +55,9 @@ export class OpenZosmaAgentExecutor implements AgentExecutor {
 		}
 	}
 
-	async onMessageSend(
-		request: SendMessageRequest,
-		task?: Task,
-	): Promise<SendMessageResponse> {
+	async onMessageSend(request: SendMessageRequest, task?: Task): Promise<SendMessageResponse> {
 		const params = request.params as unknown as Record<string, unknown>
-		const taskId = (params["id"] as string | undefined) ?? task?.id
+		const taskId = (params.id as string | undefined) ?? task?.id
 		if (!taskId) {
 			return {
 				jsonrpc: "2.0",
@@ -75,7 +66,7 @@ export class OpenZosmaAgentExecutor implements AgentExecutor {
 			}
 		}
 
-		const message = params["message"] as { parts?: Array<{ type: string; text?: string }> } | undefined
+		const message = params.message as { parts?: Array<{ type: string; text?: string }> } | undefined
 		const userText = message?.parts ? extractUserText(message.parts) : null
 		if (!userText) {
 			return {
@@ -134,7 +125,7 @@ export class OpenZosmaAgentExecutor implements AgentExecutor {
 		task?: Task,
 	): AsyncGenerator<SendMessageStreamingResponse, void, unknown> {
 		const params = request.params as unknown as Record<string, unknown>
-		const taskId = (params["id"] as string | undefined) ?? task?.id
+		const taskId = (params.id as string | undefined) ?? task?.id
 		if (!taskId) {
 			yield {
 				jsonrpc: "2.0",
@@ -144,7 +135,7 @@ export class OpenZosmaAgentExecutor implements AgentExecutor {
 			return
 		}
 
-		const message = params["message"] as { parts?: Array<{ type: string; text?: string }> } | undefined
+		const message = params.message as { parts?: Array<{ type: string; text?: string }> } | undefined
 		const userText = message?.parts ? extractUserText(message.parts) : null
 		if (!userText) {
 			yield {
@@ -213,10 +204,7 @@ export class OpenZosmaAgentExecutor implements AgentExecutor {
 		}
 	}
 
-	async onCancel(
-		request: CancelTaskRequest,
-		task: Task,
-	): Promise<CancelTaskResponse> {
+	async onCancel(request: CancelTaskRequest, task: Task): Promise<CancelTaskResponse> {
 		this.cancelTask(task.id)
 		const updated: Task = {
 			...task,

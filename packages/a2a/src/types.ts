@@ -17,9 +17,5 @@ export interface A2ASessionProvider {
 		},
 	): Promise<{ id: string }>
 
-	sendMessage(
-		sessionId: string,
-		content: string,
-		signal?: AbortSignal,
-	): AsyncGenerator<{ type: string; text?: string }>
+	sendMessage(sessionId: string, content: string, signal?: AbortSignal): AsyncGenerator<{ type: string; text?: string }>
 }
