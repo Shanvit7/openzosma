@@ -50,6 +50,25 @@ You are reviewing pull requests for OpenZosma, a self-hosted AI agent platform. 
 - Semicolons only as needed (ASI-safe style).
 - Imports should be organized (Biome `organizeImports` is enabled).
 
+## Code Correctness and Reliability
+
+- Flag suspicious or incorrect logic even if it compiles.
+- Check async correctness:
+  - Missing `await` on async calls.
+  - Unhandled promises (floating promises without `void` or `.catch()`).
+  - Misuse of `Promise.all` (e.g., independent promises that should be concurrent but are awaited sequentially, or dependent promises incorrectly parallelized).
+- Ensure edge cases are handled: `null`, `undefined`, empty arrays, empty strings, missing optional fields.
+- Identify potential race conditions or shared-state issues, especially in WebSocket handlers and session management.
+- Check for off-by-one errors, incorrect boolean logic, and unreachable code paths.
+
+## Performance
+
+- Flag N+1 query patterns. If a loop issues one query per iteration, suggest batching.
+- Avoid repeated database or API calls inside loops -- fetch once, then process in memory.
+- Highlight blocking or synchronous operations in critical paths (e.g., synchronous file I/O in request handlers).
+- Flag unnecessary re-renders in React components: missing `useMemo`, `useCallback`, or stable references in dependency arrays.
+- Check for unbounded data fetching -- queries without `LIMIT`, streams without backpressure, or responses that grow with data size.
+
 ## Architecture Rules
 
 ### Package Boundaries
@@ -78,11 +97,13 @@ When reviewing, verify:
 3. **SQL safety:** All queries use parameterized values.
 4. **Error handling:** Errors are caught and handled meaningfully, not swallowed.
 5. **No secrets:** No hardcoded credentials, keys, or connection strings.
-6. **Tests:** New functionality has corresponding tests, or the PR explains why tests are not applicable.
-7. **Migrations:** If schema changes are included, both up and down SQL files exist and are correct.
-8. **Package boundaries:** No cross-package internal imports.
-9. **Naming conventions:** Files, variables, and database columns follow existing conventions.
-10. **Commit messages:** Follow `type(scope): description` format. Include `fixes #N` or `closes #N` when applicable.
+6. **Async correctness:** No missing `await`, no floating promises, no `Promise.all` misuse.
+7. **Performance:** No N+1 queries, no repeated DB calls in loops, no blocking I/O in hot paths.
+8. **Tests:** New functionality has corresponding tests, or the PR explains why tests are not applicable.
+9. **Migrations:** If schema changes are included, both up and down SQL files exist and are correct.
+10. **Package boundaries:** No cross-package internal imports.
+11. **Naming conventions:** Files, variables, and database columns follow existing conventions.
+12. **Commit messages:** Follow `type(scope): description` format. Include `fixes #N` or `closes #N` when applicable.
 
 ## Review Tone
 
