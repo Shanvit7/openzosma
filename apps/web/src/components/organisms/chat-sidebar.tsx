@@ -55,7 +55,7 @@ const ChatSidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
 				<h3 className="font-semibold text-sm">Conversations</h3>
 				<Button size="icon-sm" variant="ghost">
 					<Link href="/chat">
-					<IconPlus className="size-4" />
+						<IconPlus className="size-4" />
 					</Link>
 				</Button>
 			</div>
@@ -87,8 +87,8 @@ const ChatSidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
 							{!search && (
 								<Button size="sm" variant="outline" className="text-xs">
 									<Link href="/chat">
-									<IconPlus className="size-3" />
-									Start a conversation
+										<IconPlus className="size-3" />
+										Start a conversation
 									</Link>
 								</Button>
 							)}
