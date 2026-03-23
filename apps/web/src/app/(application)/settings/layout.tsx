@@ -1,7 +1,7 @@
 "use client"
 
 import { cn } from "@/src/lib/utils"
-import { IconSettings, IconUser } from "@tabler/icons-react"
+import { IconDatabase, IconSettings, IconUser } from "@tabler/icons-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
@@ -18,6 +18,12 @@ const settingsnav = [
 		href: "/profile",
 		icon: IconUser,
 	},
+	{
+		id: "knowledge-base",
+		label: "Knowledge Base",
+		href: "/knowledge-base",
+		icon: IconDatabase,
+	}
 ]
 
 const SettingsLayout = ({ children }: { children: React.ReactNode }) => {
