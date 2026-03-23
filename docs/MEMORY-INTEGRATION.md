@@ -3,7 +3,7 @@
 Technical reference for how agent memory works in OpenZosma. Covers every layer from the
 Kubernetes pod filesystem through the pi extension hooks to the LLM context window.
 
-Last updated: 2026-03-23
+Last updated: 2026-03-24
 
 ---
 
@@ -181,95 +181,145 @@ that deduplicates and prunes when observations grow too large.
 
 ### Summary: memory classification matrix
 
-| Type | Files | Written by | Injected into context | Survives session end | Survives pod restart |
-|---|---|---|---|---|---|
-| Long-term | MEMORY.md | Agent via `memory_write` | Yes (every turn) | Yes | Yes (PV) |
-| Episodic | daily/YYYY-MM-DD.md | Agent + auto-handoff + exit summary | Today + yesterday | Yes | Yes (PV) |
-| Working | SCRATCHPAD.md | Agent via `scratchpad` | Yes (open items) | Yes | Yes (PV) |
-| Observational | Session entries | Observational-memory extension | Yes (as compaction) | No | No |
+| Type | Files | Written by | Injected into context | Survives session end | Survives pod restart | Crosses conversations |
+|---|---|---|---|---|---|---|
+| Long-term | MEMORY.md | Agent via `memory_write` | Yes (every turn) | Yes | Yes (PV) | Yes |
+| Episodic | daily/YYYY-MM-DD.md | Agent + auto-handoff + exit summary | Today + yesterday | Yes | Yes (PV) | Yes |
+| Working | SCRATCHPAD.md | Agent via `scratchpad` | Yes (open items) | Yes | Yes (PV) | Yes |
+| Observational | Session entries | Observational-memory extension | Yes (as compaction) | No | No | No |
+| Conversation | In-memory messages | pi SessionManager | Yes (raw tail) | No | No | No |
+
+### Cross-conversation boundary rules
+
+All memory types stored in the shared `memoryDir` (MEMORY.md, SCRATCHPAD.md, daily logs)
+are **intentionally shared across conversations** that use the same agent configuration.
+This is by design:
+
+- **Long-term memory** carries forward curated facts, decisions, and user preferences.
+  A new conversation inherits everything the agent has learned so far.
+- **Episodic logs** carry forward the daily narrative. A new conversation started on the
+  same day sees earlier entries from that day plus yesterday.
+- **Working memory (scratchpad)** carries forward open TODO items. A task added in one
+  conversation remains visible in the next. This acts as a cross-conversation task list
+  for the agent — unfinished work is not forgotten when the user starts a new thread.
+
+The following are **not shared** across conversations:
+
+- **Observational memory** (compaction summaries with priority-tagged bullets) exists only
+  in the pi session's in-memory entries. It dies when the session ends. A new conversation
+  starts with a clean observation slate.
+- **Raw conversation history** (the actual messages and tool calls) lives in
+  `SessionManager.inMemory()` within the pi SDK. It is never written to disk and is
+  garbage collected when the session object is released.
+
+This means a new conversation thread gets the agent's accumulated knowledge but not
+the dialogue or reasoning context from previous threads. The agent knows *what* it
+learned, but not *how* the previous conversation went.
 
 ---
 
 ## 4. Filesystem Layout
 
-All memory files live under a single root directory, defaulting to
-`<workspaceDir>/.pi/agent/memory`:
+Memory files are stored in a **stable directory that persists across conversations**.
+The gateway derives the memory path from the agent configuration ID, not the session ID:
 
 ```
-/home/agent/                          # Pod workspace root (PV mount)
-  └── .pi/
-      └── agent/
-          └── memory/                 # PI_MEMORY_DIR
-              ├── MEMORY.md           # Long-term curated memory
-              ├── SCRATCHPAD.md       # Working checklist
-              └── daily/
-                  ├── 2026-03-21.md   # Episodic log (2 days ago)
-                  ├── 2026-03-22.md   # Episodic log (yesterday)
-                  └── 2026-03-23.md   # Episodic log (today)
+workspace/                            # OPENZOSMA_WORKSPACE root
+├── agents/
+│   ├── <agentConfigId>/              # Stable per-agent-config directory
+│   │   └── memory/                   # PI_MEMORY_DIR for this config
+│   │       ├── MEMORY.md             # Long-term curated memory
+│   │       ├── SCRATCHPAD.md         # Working checklist
+│   │       └── daily/
+│   │           ├── 2026-03-21.md
+│   │           ├── 2026-03-22.md
+│   │           └── 2026-03-23.md
+│   └── default/                      # Fallback when no agentConfigId
+│       └── memory/
+│           ├── MEMORY.md
+│           └── ...
+└── sessions/
+    ├── <session-uuid-1>/             # Per-session workspace (ephemeral work)
+    └── <session-uuid-2>/
 ```
 
-Directories are created lazily by pi-memory on `session_start` via `fs.mkdirSync` with
-`{ recursive: true }`.
+The critical design decision: **sessions are ephemeral, memory is not.** Each new
+conversation creates a fresh session directory under `sessions/`, but all sessions
+that share an agent config point to the same memory directory under `agents/`.
 
-The path is controlled by the `PI_MEMORY_DIR` environment variable, which `@openzosma/memory`
-sets during bootstrap.
+The path is controlled by the `PI_MEMORY_DIR` environment variable, which
+`@openzosma/memory` sets during bootstrap. The gateway's `SessionManager` computes
+the stable path and passes it as `memoryDir` through `AgentSessionOpts`.
 
 ---
 
 ## 5. Bootstrap Sequence
 
-When a user sends their first message, `PiAgentSession` in `@openzosma/agents` creates
-a pi-coding-agent session. Memory bootstraps as part of that process:
+When a user sends their first message, the gateway's `SessionManager` creates a session
+and computes a stable memory directory. `PiAgentSession` in `@openzosma/agents` then
+bootstraps the pi-coding-agent session with that directory:
 
 ```
-PiAgentSession constructor
+SessionManager.createSession()                     (@openzosma/gateway)
 │
-├── 1. bootstrapMemory({ workspaceDir })          (@openzosma/memory)
-│      ├── Sets process.env.PI_MEMORY_DIR
-│      ├── Sets process.env.PI_MEMORY_QMD_UPDATE   (if configured)
-│      ├── Sets process.env.PI_MEMORY_NO_SEARCH    (if configured)
-│      ├── Resolves pi-memory/index.ts path        (via createRequire)
-│      ├── Resolves pi-extension-observational-memory/index.ts path
-│      └── Returns { paths: [piMemPath, obsMemPath], memoryDir }
+├── Compute stable memoryDir:
+│     workspace/agents/<agentConfigId>/memory/      (or agents/default/memory/)
+│     mkdirSync(memoryDir, { recursive: true })
 │
-├── 2. bootstrapPiExtensions()                     (@openzosma/agents)
-│      └── Returns existing extension paths (web-access, subagents, guardrails)
+├── Acquire initLock (serializes concurrent session init)
 │
-├── 3. new DefaultResourceLoader({                 (pi-coding-agent)
-│        additionalExtensionPaths: [
-│          ...extensionPaths,      # web-access, subagents, guardrails
-│          ...memoryResult.paths,  # pi-memory, observational-memory
-│        ]
-│      })
-│
-├── 4. resourceLoader.reload()
-│      └── jiti loads each extension .ts file at runtime
-│          ├── pi-memory default export called with (pi: ExtensionAPI)
-│          │     ├── Registers session_start hook
-│          │     ├── Registers session_shutdown hook
-│          │     ├── Registers before_agent_start hook
-│          │     ├── Registers session_before_compact hook
-│          │     ├── Registers input hook
-│          │     ├── Registers tools: memory_write, memory_read, scratchpad, memory_search
-│          │     └── pi-memory reads PI_MEMORY_DIR from env
-│          │
-│          └── observational-memory default export called with (pi: ExtensionAPI)
-│                ├── Registers session_start hook (reads flags)
-│                ├── Registers agent_end hook (auto-compaction trigger)
-│                ├── Registers session_before_compact hook (observer)
-│                ├── Registers session_before_tree hook (branch summarizer)
-│                ├── Registers session_compact hook (cleanup)
-│                ├── Registers commands: obs-memory-status, obs-reflect, etc.
-│                └── Registers shortcut: ctrl+shift+o (status overlay)
-│
-└── 5. createAgentSession({ ... })                 (pi-coding-agent)
-       └── Session created, hooks are now active
+└── provider.createSession({ workspaceDir: sessionDir, memoryDir, ... })
+    │
+    PiAgentSession constructor                     (@openzosma/agents)
+    │
+    ├── 1. bootstrapMemory({ workspaceDir, memoryDir })  (@openzosma/memory)
+    │      ├── Sets process.env.PI_MEMORY_DIR = memoryDir
+    │      ├── Sets process.env.PI_MEMORY_QMD_UPDATE   (if configured)
+    │      ├── Sets process.env.PI_MEMORY_NO_SEARCH    (if configured)
+    │      ├── Resolves pi-memory/index.ts path        (via createRequire)
+    │      ├── Resolves pi-extension-observational-memory/index.ts path
+    │      └── Returns { paths: [piMemPath, obsMemPath], memoryDir }
+    │
+    ├── 2. bootstrapPiExtensions()                     (@openzosma/agents)
+    │      └── Returns existing extension paths (web-access, subagents, guardrails)
+    │
+    ├── 3. new DefaultResourceLoader({                 (pi-coding-agent)
+    │        additionalExtensionPaths: [
+    │          ...extensionPaths,      # web-access, subagents, guardrails
+    │          ...memoryResult.paths,  # pi-memory, observational-memory
+    │        ]
+    │      })
+    │
+    ├── 4. resourceLoader.reload()
+    │      └── jiti loads each extension .ts file at runtime (moduleCache: false)
+    │          ├── pi-memory default export called with (pi: ExtensionAPI)
+    │          │     ├── Registers session_start hook
+    │          │     ├── Registers session_shutdown hook
+    │          │     ├── Registers before_agent_start hook
+    │          │     ├── Registers session_before_compact hook
+    │          │     ├── Registers input hook
+    │          │     ├── Registers tools: memory_write, memory_read, scratchpad, memory_search
+    │          │     └── pi-memory reads PI_MEMORY_DIR from env (fresh per jiti load)
+    │          │
+    │          └── observational-memory default export called with (pi: ExtensionAPI)
+    │                ├── Registers session_start hook (reads flags)
+    │                ├── Registers agent_end hook (auto-compaction trigger)
+    │                ├── Registers session_before_compact hook (observer)
+    │                ├── Registers session_before_tree hook (branch summarizer)
+    │                ├── Registers session_compact hook (cleanup)
+    │                ├── Registers commands: obs-memory-status, obs-reflect, etc.
+    │                └── Registers shortcut: ctrl+shift+o (status overlay)
+    │
+    └── 5. createAgentSession({ ... })                 (pi-coding-agent)
+           └── Session created, hooks are now active
+
+SessionManager releases initLock (100ms after constructor)
 ```
 
-**Registration order matters.** pi-memory is listed before observational-memory in the
-paths array. The pi extension system runs hooks in registration order. This means
-pi-memory's `session_before_compact` hook (which writes the handoff entry to the daily log)
-runs before observational-memory's hook (which replaces the compaction summary).
+**Concurrency note:** The `initLock` in `SessionManager` ensures that `PI_MEMORY_DIR`
+set by one session's `bootstrapMemory()` is not overwritten by another concurrent
+session before jiti reads it. jiti uses `moduleCache: false`, so each load gets a
+fresh module instance that reads the env var at that moment.
 
 ---
 
@@ -517,12 +567,15 @@ package encapsulates this configuration so the agent code stays clean.
 
 ### How memory is wired in
 
-The `PiAgentSession` constructor calls `bootstrapMemory` and merges the returned extension
-paths with the other pi extensions:
+The `PiAgentSession` constructor calls `bootstrapMemory` with the stable `memoryDir`
+from the gateway and merges the returned extension paths with the other pi extensions:
 
 ```typescript
 constructor(opts: AgentSessionOpts) {
-  const memoryResult = bootstrapMemory({ workspaceDir: opts.workspaceDir })
+  const memoryResult = bootstrapMemory({
+    workspaceDir: opts.workspaceDir,
+    memoryDir: opts.memoryDir,       // stable dir from SessionManager
+  })
   const { extensionPaths } = bootstrapPiExtensions()
 
   const resourceLoader = new DefaultResourceLoader({
@@ -537,6 +590,10 @@ constructor(opts: AgentSessionOpts) {
   // createAgentSession loads extensions via jiti
 }
 ```
+
+The `memoryDir` is separate from `workspaceDir`. `workspaceDir` is per-session
+(ephemeral), while `memoryDir` is per-agent-config (persistent). This separation
+is what allows memory to survive across conversations.
 
 ### What the agent code does NOT do
 
@@ -577,26 +634,28 @@ Orchestrator
     │
     ▼
 K3s Pod (OpenShell sandbox)
-├── /home/agent/            ← PersistentVolume mount
-│   └── .pi/agent/memory/   ← memory files live here
-├── /workspace/             ← agent working directory
-├── /tmp/agent/             ← scratch space
+├── /workspace/agents/<configId>/memory/   ← memory PV mount (shared across sessions)
+│   ├── MEMORY.md
+│   ├── SCRATCHPAD.md
+│   └── daily/
+├── /workspace/sessions/<sessionId>/       ← session workspace (ephemeral)
+├── /tmp/agent/                            ← scratch space
 └── pi-coding-agent process
-    ├── pi-memory extension (loaded)
+    ├── pi-memory extension (reads from memory PV)
     └── observational-memory extension (loaded)
 ```
 
 ### PersistentVolume (PV) for memory
 
-Memory files must survive pod restarts. The `/home/agent/` directory is backed by a
-Kubernetes PersistentVolume (PV) mounted into each pod:
+Memory files must survive pod restarts. The memory directory under `workspace/agents/`
+is backed by a Kubernetes PersistentVolume (PV) scoped to the agent configuration:
 
 ```yaml
 # Conceptual PV spec (not yet implemented)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: agent-memory-pvc
+  name: agent-<configId>-memory-pvc
 spec:
   accessModes: [ReadWriteOnce]
   resources:
@@ -605,23 +664,23 @@ spec:
 ```
 
 **Current state:** The K8s manifests in `infra/k8s/` are placeholders. The PV setup
-is planned for Phase 4 (orchestrator + sandbox integration). For now, the sandbox
-Dockerfile creates `/workspace` but does not configure persistent storage.
+is planned for Phase 4 (orchestrator + sandbox integration). For local development,
+the gateway writes memory to `workspace/agents/<configId>/memory/` on the host
+filesystem, which persists across server restarts.
 
-### Session-to-pod mapping
+### Session-to-memory mapping
+
+All sessions that share an `agentConfigId` share the same memory directory.
+Sessions without a config use the `default` memory directory.
 
 | Session state | Pod state | Memory state |
 |---|---|---|
-| `created` | Pod being allocated from pool | Memory dir does not exist yet |
-| `active` | Pod running, gRPC connected | Memory dir created on first `session_start` |
+| `created` | Pod being allocated from pool | Memory dir exists (created by SessionManager) |
+| `active` | Pod running, gRPC connected | pi-memory reads existing files, continues accumulating |
 | `paused` | Pod preserved but idle | Memory files intact on PV |
 | `active` (resumed) | Pod re-activated | pi-memory reads existing files, continues |
 | `ended` | Pod destroyed | Memory files persist on PV |
-| `failed` | Pod destroyed | Memory files persist on PV |
-
-When a new session is created for the same user, the orchestrator can mount the same
-PV, giving the new pod access to all previous memory files. This is how long-term
-memory and daily logs survive across sessions.
+| New session (same config) | New pod allocated | Same memory PV mounted, all prior memory available |
 
 ### Pod filesystem policy
 
@@ -934,7 +993,10 @@ interface MemoryConfig {
 | `packages/memory/src/index.ts` | @openzosma/memory | Public exports |
 | `packages/memory/src/bootstrap.test.ts` | @openzosma/memory | 9 tests for bootstrap + config |
 | `packages/agents/src/pi.agent.ts` | @openzosma/agents | `PiAgentSession` — wires memory into session |
+| `packages/agents/src/types.ts` | @openzosma/agents | `AgentSessionOpts` — includes `memoryDir` field |
 | `packages/agents/src/pi/extensions/index.ts` | @openzosma/agents | `bootstrapPiExtensions()` — other extensions |
+| `packages/gateway/src/session-manager.ts` | @openzosma/gateway | `SessionManager` — computes stable memory dir per agent config, serializes init |
+| `packages/gateway/src/session-manager.test.ts` | @openzosma/gateway | 4 tests for memory dir stability and isolation |
 | `node_modules/pi-memory/index.ts` | pi-memory (npm) | Full extension source (~1400 lines) |
 | `node_modules/pi-extension-observational-memory/index.ts` | obs-memory (npm) | Full extension source (~1200 lines) |
 | `node_modules/pi-extension-observational-memory/overlay.ts` | obs-memory (npm) | TUI status overlay component |

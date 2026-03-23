@@ -13,7 +13,10 @@ class PiAgentSession implements AgentSession {
 	private messages: AgentMessage[] = []
 
 	constructor(opts: AgentSessionOpts) {
-		const memoryResult = bootstrapMemory({ workspaceDir: opts.workspaceDir })
+		const memoryResult = bootstrapMemory({
+			workspaceDir: opts.workspaceDir,
+			memoryDir: opts.memoryDir,
+		})
 		const toolList = createDefaultTools(opts.workspaceDir, opts.toolsEnabled)
 		const { model } = resolveModel()
 		const { extensionPaths } = bootstrapPiExtensions()
