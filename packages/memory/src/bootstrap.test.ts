@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { bootstrapMemory } from "./bootstrap.js"
 import { applyMemoryEnv } from "./config.js"
 
@@ -49,11 +49,11 @@ describe("applyMemoryEnv", () => {
 
 describe("bootstrapMemory", () => {
 	beforeEach(() => {
-		delete process.env.PI_MEMORY_DIR
+		process.env.PI_MEMORY_DIR = undefined
 	})
 
 	afterEach(() => {
-		delete process.env.PI_MEMORY_DIR
+		process.env.PI_MEMORY_DIR = undefined
 	})
 
 	it("returns paths for installed extensions", () => {

@@ -23,10 +23,7 @@ class PiAgentSession implements AgentSession {
 
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: opts.workspaceDir,
-			additionalExtensionPaths: [
-				...extensionPaths,
-				...memoryResult.paths,
-			],
+			additionalExtensionPaths: [...extensionPaths, ...memoryResult.paths],
 			systemPrompt: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
 		})
 

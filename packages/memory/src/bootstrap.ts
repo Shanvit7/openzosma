@@ -1,7 +1,7 @@
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
-import type { MemoryBootstrapResult, MemoryConfig } from "./types.js"
 import { applyMemoryEnv } from "./config.js"
+import type { MemoryBootstrapResult, MemoryConfig } from "./types.js"
 
 /**
  * Resolve the entry point file for an npm package.

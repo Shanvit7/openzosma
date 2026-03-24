@@ -1,4 +1,4 @@
-import { agentConfigQueries, settingQueries, type Pool, type AgentConfig } from "@openzosma/db"
+import { type AgentConfig, type Pool, agentConfigQueries, settingQueries } from "@openzosma/db"
 import type { AgentCard, AgentSkill } from "a2a-js"
 import { SKILL_METADATA } from "./skills.js"
 

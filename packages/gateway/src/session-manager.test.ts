@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { existsSync, mkdtempSync, rmSync } from "node:fs"
-import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { AgentProvider, AgentSession, AgentSessionOpts, AgentStreamEvent } from "@openzosma/agents"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { SessionManager } from "./session-manager.js"
 
 /** Stub agent session that records opts and does nothing. */
@@ -39,7 +39,7 @@ describe("SessionManager memory directory", () => {
 	})
 
 	afterEach(() => {
-		if (savedEnv === undefined) delete process.env.OPENZOSMA_WORKSPACE
+		if (savedEnv === undefined) process.env.OPENZOSMA_WORKSPACE = undefined
 		else process.env.OPENZOSMA_WORKSPACE = savedEnv
 		rmSync(tmpDir, { recursive: true, force: true })
 	})
