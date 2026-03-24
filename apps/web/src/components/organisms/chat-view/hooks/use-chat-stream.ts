@@ -1,6 +1,7 @@
 "use client"
 
 import useSaveMessage from "@/src/hooks/chat/use-save-message"
+import { useSession } from "@/src/lib/auth-client"
 import { GATEWAY_URL } from "@/src/lib/constants"
 import { QUERY_KEYS } from "@/src/utils/query-keys"
 import type { AgentStreamEvent, AgentStreamEventType } from "@openzosma/agents/types"
@@ -48,6 +49,7 @@ const useChatStream = (
 ): UseChatStreamReturn => {
 	const queryClient = useQueryClient()
 	const { mutateAsync: saveMessage } = useSaveMessage()
+	const { data: session } = useSession()
 
 	const [streaming, setStreaming] = useState(false)
 	const [streamingcontent, setStreamingcontent] = useState("")
@@ -157,6 +159,7 @@ const useChatStream = (
 								type: "message",
 								sessionId: conversationid,
 								content: message.text,
+								userId: session?.user?.id,
 							}),
 						)
 					}
@@ -325,7 +328,7 @@ const useChatStream = (
 			setStreamingreasoning("")
 			setStreamingartifacts([])
 		},
-		[conversationid, conversation, participants, queryClient, saveMessage],
+		[conversationid, conversation, participants, queryClient, saveMessage, session],
 	)
 
 	return {

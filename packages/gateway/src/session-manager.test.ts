@@ -45,7 +45,7 @@ describe("SessionManager memory directory", () => {
 	})
 
 	it("passes a stable memoryDir per agent config", async () => {
-		const sm = new SessionManager(provider)
+		const sm = new SessionManager({ provider })
 		const configId = "cfg-abc-123"
 
 		await sm.createSession("s1", configId)
@@ -61,14 +61,14 @@ describe("SessionManager memory directory", () => {
 	})
 
 	it("uses 'default' memory dir when no agentConfigId", async () => {
-		const sm = new SessionManager(provider)
+		const sm = new SessionManager({ provider })
 		await sm.createSession("s1")
 
 		expect(provider.calls[0].memoryDir).toBe(join(tmpDir, "agents", "default", "memory"))
 	})
 
 	it("creates memory directory on disk", async () => {
-		const sm = new SessionManager(provider)
+		const sm = new SessionManager({ provider })
 		const configId = "cfg-xyz"
 		await sm.createSession("s1", configId)
 
@@ -77,7 +77,7 @@ describe("SessionManager memory directory", () => {
 	})
 
 	it("different agent configs get different memory dirs", async () => {
-		const sm = new SessionManager(provider)
+		const sm = new SessionManager({ provider })
 		await sm.createSession("s1", "config-a")
 		await sm.createSession("s2", "config-b")
 
