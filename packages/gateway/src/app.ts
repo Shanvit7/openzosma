@@ -1,16 +1,25 @@
 import { createHash, randomBytes } from "node:crypto"
 import { buildDefaultAgentCard } from "@openzosma/a2a"
+import type { Pool } from "@openzosma/db"
+import { agentConfigQueries, apiKeyQueries } from "@openzosma/db"
+import type { Context } from "hono"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { streamSSE } from "hono/streaming"
 import type { Auth } from "@openzosma/auth"
-import type { Pool } from "@openzosma/db"
-import { agentConfigQueries, apiKeyQueries } from "@openzosma/db"
 import { createAuthMiddleware } from "./middleware/auth.js"
 import { createPerAgentRouter } from "./a2a.js"
 import type { SessionManager } from "./session-manager.js"
 
-export function createApp(sessionManager: SessionManager, pool?: Pool, auth?: Auth): Hono {
+/**
+ * Extract userId from request. Currently reads from X-User-Id header.
+ * Will be replaced by Better Auth session middleware when wired in.
+ */
+const getUserId = (c: Context): string | undefined => {
+	return c.req.header("X-User-Id") ?? undefined
+}
+
+export const createApp = (sessionManager: SessionManager, pool?: Pool, auth?: Auth): Hono => {
 	const app = new Hono()
 
 	app.use(
@@ -18,7 +27,7 @@ export function createApp(sessionManager: SessionManager, pool?: Pool, auth?: Au
 		cors({
 			origin: ["http://localhost:3000"],
 			allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
-			allowHeaders: ["Content-Type", "Authorization"],
+			allowHeaders: ["Content-Type", "Authorization", "X-User-Id"],
 		}),
 	)
 
@@ -62,7 +71,8 @@ export function createApp(sessionManager: SessionManager, pool?: Pool, auth?: Au
 	// -----------------------------------------------------------------------
 
 	app.post("/api/v1/sessions", async (c) => {
-		const session = await sessionManager.createSession()
+		const userId = getUserId(c)
+		const session = await sessionManager.createSession(undefined, undefined, undefined, userId)
 		return c.json({ id: session.id, createdAt: session.createdAt }, 201)
 	})
 
@@ -97,8 +107,9 @@ export function createApp(sessionManager: SessionManager, pool?: Pool, auth?: Au
 			return c.json({ error: "content is required" }, 400)
 		}
 
+		const userId = getUserId(c)
 		const events = []
-		for await (const event of sessionManager.sendMessage(c.req.param("id"), body.content)) {
+		for await (const event of sessionManager.sendMessage(c.req.param("id"), body.content, undefined, userId)) {
 			events.push(event)
 		}
 
@@ -116,6 +127,35 @@ export function createApp(sessionManager: SessionManager, pool?: Pool, auth?: Au
 			return c.json({ error: "Session not found" }, 404)
 		}
 		return c.json(session.messages)
+	})
+
+	// -----------------------------------------------------------------------
+	// Artifact routes
+	// -----------------------------------------------------------------------
+
+	app.get("/api/v1/sessions/:id/artifacts", (c) => {
+		const artifacts = sessionManager.artifactManager.listArtifacts(c.req.param("id"))
+		return c.json({ artifacts })
+	})
+
+	app.get("/api/v1/sessions/:id/artifacts/:filename", (c) => {
+		const sessionId = c.req.param("id")
+		const filename = c.req.param("filename")
+		const result = sessionManager.artifactManager.getArtifactStream(sessionId, filename)
+
+		if (!result) {
+			return c.json({ error: "Artifact not found" }, 404)
+		}
+
+		const download = c.req.query("download") === "true"
+		const disposition = download ? `attachment; filename="${filename}"` : "inline"
+
+		c.header("Content-Type", result.mediatype)
+		c.header("Content-Length", String(result.sizebytes))
+		c.header("Content-Disposition", disposition)
+		c.header("Cache-Control", "private, max-age=3600")
+
+		return c.body(result.stream as unknown as ReadableStream)
 	})
 
 	// SSE stream — subscribe to real-time events for a session.

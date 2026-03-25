@@ -17,8 +17,8 @@
 		"dev": "tsx watch src/index.ts"
 	},
 	"dependencies": {
+		"@openzosma/agents": "workspace:*",
 		"@openzosma/db": "workspace:*",
-		"@openzosma/grpc": "workspace:*",
 		"@openzosma/sandbox": "workspace:*"
 	},
 	"devDependencies": {

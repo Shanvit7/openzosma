@@ -27,14 +27,58 @@ If the user did not give you a concrete task, read README.md and ARCHITECTURE.md
 - Never remove or downgrade code to fix type errors from outdated dependencies; upgrade the dependency instead.
 - Always ask before removing functionality or code that appears intentional.
 
+## TypeScript Coding Standards
+
+- **Arrow functions everywhere.** All functions (exported and internal) must use arrow function syntax:
+  ```ts
+  export const buildLocalModel = (): Model<"openai-completions"> | undefined => {
+    // ...
+  }
+  
+  const helperFunction = (param: string): boolean => {
+    return true
+  }
+  ```
+
+- **Use `interface` for object contracts.** When defining the shape of objects (data structures, configs), use `interface`:
+  ```ts
+  export interface ResolveModelOpts {
+    provider?: string
+    model?: string
+    baseUrl?: string
+  }
+  ```
+
+- **Use `type` for unions, literals, and complex types.** Use `type` for type aliases that represent unions, literal types, or compositions:
+  ```ts
+  export type BuiltInToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls"
+  
+  export type Model<T extends Api> = { /* ... */ }
+  ```
+
+- **JSDoc for exported functions.** Document the purpose, parameters, and return value:
+  ```ts
+  /**
+   * Resolve the model to use. Priority:
+   * 1. Local model via OPENZOSMA_LOCAL_MODEL_URL env var
+   * 2. Explicit overrides passed via opts
+   * 3. Auto-detect from available API keys
+   */
+  export const resolveModel = (opts?: ResolveModelOpts): { model: Model<Api>; apiKey: string } => {
+    // ...
+  }
+  ```
+
+- **Naming conventions:** camelCase for variables/functions, PascalCase for types/interfaces/classes.
+
 ## Architecture Rules
 
 - **Self-hosted.** No `tenant_id` columns. No tenant resolution. One instance = one organization.
 - **Backend and frontend are strictly separate.** The backend (`packages/`) is a standalone TypeScript service. The web dashboard (`apps/web/`) is an independent consumer. No Next.js API routes in the critical path.
-- **No ORM.** Raw SQL via `pg` driver. Migrations via `node-pg-migrate`. No Drizzle, no Prisma, no TypeORM.
+- **No ORM.** Raw SQL via `pg` driver. Migrations via `db-migrate`. No Drizzle, no Prisma, no TypeORM.
 - **No global state.** All state must be scoped to a session or explicitly shared via Valkey/PostgreSQL. Module-level singletons are forbidden.
 - **Per-session isolation.** Every agent session gets its own sandbox, tool instances, caches, and config. No cross-session data leakage.
-- **gRPC for internal communication.** Gateway <-> Orchestrator and Orchestrator <-> Sandbox use gRPC. External clients use REST/WebSocket/A2A.
+- **gRPC for internal communication.** Proto definitions exist in `proto/` and `packages/grpc/` but are **not used at runtime**. The orchestrator communicates with sandboxes via HTTP/SSE. External clients use REST/WebSocket/A2A.
 - **Pi-mono is a dependency, not a fork.** Changes to agent behavior go in pi-mono. OpenZosma only wraps, configures, and orchestrates.
 
 ## Repository Structure
@@ -42,13 +86,14 @@ If the user did not give you a concrete task, read README.md and ARCHITECTURE.md
 ```
 openzosma/
 ├── packages/           # Backend packages (TypeScript)
-│   ├── db/             # node-pg-migrate migrations, raw SQL queries
+│   ├── db/             # db-migrate migrations, raw SQL queries
 │   ├── auth/           # Better Auth
-│   ├── gateway/        # Hono HTTP server
-│   ├── orchestrator/   # Session lifecycle, sandbox pool
-│   ├── sandbox/        # OpenShell wrapper
+│   ├── gateway/        # Hono HTTP server, dual-mode session manager
+│   ├── orchestrator/   # Sandbox lifecycle, session proxying, health checks, quotas
+│   ├── sandbox/        # OpenShell CLI wrapper (TypeScript)
+│   ├── sandbox-server/ # Hono HTTP server running inside sandbox containers
 │   ├── a2a/            # A2A protocol
-│   ├── grpc/           # Proto definitions + generated stubs
+│   ├── grpc/           # Proto definitions + generated stubs (not used at runtime)
 │   ├── adapters/       # Channel adapters (slack, whatsapp)
 │   ├── skills/         # Reports
 │   └── sdk/            # Client SDK
@@ -56,7 +101,7 @@ openzosma/
 ├── apps/
 │   ├── web/            # Next.js dashboard
 │   └── mobile/         # React Native (deferred)
-├── infra/              # OpenShell policies, K8s manifests
+├── infra/              # OpenShell policies, Dockerfile, K8s manifests
 └── docs/               # Phase implementation plans
 ```
 
@@ -64,8 +109,8 @@ openzosma/
 
 - Build: `pnpm run build` (from repo root, uses Turborepo)
 - Type check: `pnpm run check` (get full output, fix all errors/warnings before committing)
-- Migrations: `pnpm --filter @openzosma/db run migrate up`
-- Generate gRPC stubs: `pnpm --filter @openzosma/grpc run generate`
+- Migrations: `pnpm db:migrate` (from repo root)
+- Generate gRPC stubs: `pnpm --filter @openzosma/grpc run generate` (stubs exist but are not used at runtime)
 - Test specific package: run from package root, e.g., `cd packages/gateway && npx vitest --run`
 - Never run: `pnpm run dev` (unless the user explicitly asks)
 - Never commit unless the user asks
@@ -75,12 +120,12 @@ openzosma/
 - **pi-mono packages:** `pi-ai`, `pi-agent-core`, `pi-coding-agent` (npm)
 - **Hono:** HTTP server framework
 - **pg:** PostgreSQL client (raw SQL, no ORM)
-- **node-pg-migrate:** Database migrations
-- **@grpc/grpc-js + protobuf-ts:** gRPC server/client + proto codegen
+- **db-migrate:** Database migrations
+- **@grpc/grpc-js + protobuf-ts:** gRPC server/client + proto codegen (stubs exist but not used at runtime)
 - **Better Auth:** Authentication
 - **@a2a-js/sdk:** A2A protocol
-- **Valkey/ioredis:** Cache, pub/sub
-- **amqplib:** RabbitMQ client
+- **Valkey/ioredis:** Cache, pub/sub (not yet implemented)
+- **amqplib:** RabbitMQ client (not yet implemented)
 
 ## Database Conventions
 

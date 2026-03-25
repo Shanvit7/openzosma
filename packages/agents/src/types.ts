@@ -50,6 +50,13 @@ export interface AgentSessionOpts {
 	sessionId: string
 	workspaceDir: string
 	/**
+	 * Stable directory for long-term memory that persists across sessions.
+	 * When omitted, defaults to workspaceDir (memory is per-session and lost on
+	 * new conversations). Should point to a directory shared by all sessions
+	 * belonging to the same agent configuration.
+	 */
+	memoryDir?: string
+	/**
 	 * LLM provider name (e.g. "anthropic", "openai").
 	 * When omitted, resolved from environment variables.
 	 */
@@ -59,6 +66,12 @@ export interface AgentSessionOpts {
 	 * When omitted, the provider default is used.
 	 */
 	model?: string
+	/**
+	 * Base URL for an OpenAI-compatible endpoint (e.g. "http://localhost:11434/v1").
+	 * When set together with `model`, creates a custom model targeting this URL
+	 * instead of looking up the model in the pi-ai registry.
+	 */
+	baseUrl?: string
 	/**
 	 * System prompt override. When omitted, the built-in default is used.
 	 */
