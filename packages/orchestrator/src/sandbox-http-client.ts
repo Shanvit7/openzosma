@@ -1,5 +1,7 @@
 import type { AgentStreamEvent } from "@openzosma/agents"
 import type {
+	KBFileEntry,
+	KBListResponse,
 	SandboxCreateSessionRequest,
 	SandboxCreateSessionResponse,
 	SandboxHealthResponse,
@@ -130,6 +132,52 @@ export class SandboxHttpClient {
 			return res.ok
 		} catch {
 			return false
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// Knowledge base
+	// -----------------------------------------------------------------------
+
+	/**
+	 * List all files in the sandbox's knowledge base, including content.
+	 */
+	async listKBFiles(): Promise<KBFileEntry[]> {
+		const res = await this.fetch("/kb")
+		if (!res.ok) {
+			throw new Error(`Sandbox listKBFiles failed (${res.status})`)
+		}
+		const body = (await res.json()) as KBListResponse
+		return body.files
+	}
+
+	/**
+	 * Write or update a file in the sandbox's knowledge base.
+	 */
+	async writeKBFile(path: string, content: string): Promise<void> {
+		const res = await this.fetch(`/kb/${path}`, {
+			method: "PUT",
+			body: JSON.stringify({ content }),
+		})
+		if (!res.ok) {
+			let detail: string
+			try {
+				const body = (await res.json()) as { error?: string }
+				detail = body.error ?? `HTTP ${res.status}`
+			} catch {
+				detail = await res.text().catch(() => `HTTP ${res.status}`)
+			}
+			throw new Error(`Sandbox writeKBFile failed (${res.status}): ${detail}`)
+		}
+	}
+
+	/**
+	 * Delete a file from the sandbox's knowledge base.
+	 */
+	async deleteKBFile(path: string): Promise<void> {
+		const res = await this.fetch(`/kb/${path}`, { method: "DELETE" })
+		if (!res.ok && res.status !== 404) {
+			throw new Error(`Sandbox deleteKBFile failed (${res.status})`)
 		}
 	}
 

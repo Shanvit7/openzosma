@@ -5,7 +5,7 @@ import { agentConfigQueries, userSandboxQueries } from "@openzosma/db"
 import type { UserSandbox } from "@openzosma/db"
 import type { SandboxHttpClient } from "./sandbox-http-client.js"
 import type { SandboxManager } from "./sandbox-manager.js"
-import type { OrchestratorSession } from "./types.js"
+import type { KBFileEntry, OrchestratorSession } from "./types.js"
 
 /**
  * Orchestrator session manager.
@@ -277,5 +277,41 @@ export class OrchestratorSessionManager {
 	 */
 	async getUserSandboxInfo(userId: string): Promise<UserSandbox | null> {
 		return userSandboxQueries.getByUserId(this.pool, userId)
+	}
+
+	// -----------------------------------------------------------------------
+	// Knowledge base sync
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Push a file to the sandbox's knowledge base.
+	 * Ensures the sandbox is running before writing.
+	 */
+	async pushKBFile(userId: string, path: string, content: string): Promise<void> {
+		await this.sandboxManager.ensureSandbox(userId)
+		const client = this.sandboxManager.getHttpClient(userId)
+		await client.writeKBFile(path, content)
+	}
+
+	/**
+	 * Delete a file from the sandbox's knowledge base.
+	 * No-op if the sandbox is not running.
+	 */
+	async deleteKBFile(userId: string, path: string): Promise<void> {
+		const state = this.sandboxManager.getSandboxState(userId)
+		if (!state) return // No sandbox running, nothing to delete
+		const client = this.sandboxManager.getHttpClient(userId)
+		await client.deleteKBFile(path)
+	}
+
+	/**
+	 * Pull all KB files from the sandbox.
+	 * Returns the full content of every file in the sandbox's .knowledge-base/.
+	 */
+	async pullKB(userId: string): Promise<KBFileEntry[]> {
+		const state = this.sandboxManager.getSandboxState(userId)
+		if (!state) return []
+		const client = this.sandboxManager.getHttpClient(userId)
+		return client.listKBFiles()
 	}
 }

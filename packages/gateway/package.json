@@ -9,6 +9,18 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./session-manager": {
+			"types": "./dist/session-manager.d.ts",
+			"import": "./dist/session-manager.js"
+		},
+		"./adapters": {
+			"types": "./dist/adapters.d.ts",
+			"import": "./dist/adapters.js"
+		},
+		"./types": {
+			"types": "./dist/types.d.ts",
+			"import": "./dist/types.js"
 		}
 	},
 	"scripts": {

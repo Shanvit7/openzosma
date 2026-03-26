@@ -6,7 +6,7 @@ import type { AgentProvider, AgentSession } from "@openzosma/agents"
 import { PiAgentProvider } from "@openzosma/agents"
 import type { Pool } from "@openzosma/db"
 import { agentConfigQueries } from "@openzosma/db"
-import type { OrchestratorSessionManager } from "@openzosma/orchestrator"
+import type { KBFileEntry, OrchestratorSessionManager } from "@openzosma/orchestrator"
 import { ArtifactManager } from "./artifact-manager.js"
 import { createSnapshot, detectChanges } from "./file-scanner.js"
 import type { FileArtifact, GatewayEvent, Session, SessionMessage } from "./types.js"
@@ -272,6 +272,44 @@ export class SessionManager {
 			createdAt: record.createdAt.toISOString(),
 			lastActiveAt: record.lastActiveAt.toISOString(),
 		}
+	}
+
+	// -----------------------------------------------------------------------
+	// Knowledge base sync
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Push a file to the user's sandbox knowledge base.
+	 *
+	 * In orchestrator mode, delegates to OrchestratorSessionManager.pushKBFile().
+	 * In local mode, this is a no-op (symlinks handle sync automatically).
+	 */
+	async pushKBFile(userId: string, path: string, content: string): Promise<void> {
+		if (!this.orchestrator) return
+		await this.orchestrator.pushKBFile(userId, path, content)
+	}
+
+	/**
+	 * Delete a file from the user's sandbox knowledge base.
+	 *
+	 * In orchestrator mode, delegates to OrchestratorSessionManager.deleteKBFile().
+	 * In local mode, this is a no-op (symlinks handle sync automatically).
+	 */
+	async deleteKBFile(userId: string, path: string): Promise<void> {
+		if (!this.orchestrator) return
+		await this.orchestrator.deleteKBFile(userId, path)
+	}
+
+	/**
+	 * Pull all KB files from the user's sandbox.
+	 *
+	 * In orchestrator mode, returns files from the sandbox's .knowledge-base/.
+	 * In local mode, returns an empty array (symlinks mean the files are
+	 * already on the local filesystem).
+	 */
+	async pullKB(userId: string): Promise<KBFileEntry[]> {
+		if (!this.orchestrator) return []
+		return this.orchestrator.pullKB(userId)
 	}
 
 	/**

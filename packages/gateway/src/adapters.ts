@@ -17,16 +17,32 @@ export interface ChannelAdapter {
 }
 
 /**
+ * Config shape expected by SlackAdapter constructor.
+ * Duplicated here to avoid a package dependency on @openzosma/adapter-slack
+ * (which would create a circular workspace dependency).
+ */
+interface SlackAdapterConfig {
+	botToken: string
+	appToken?: string
+}
+
+/**
  * Initialize all configured channel adapters at gateway startup.
  * Adapters are enabled by the presence of their required env vars.
  */
-export async function initAdapters(sessionManager: SessionManager): Promise<ChannelAdapter[]> {
+export const initAdapters = async (sessionManager: SessionManager): Promise<ChannelAdapter[]> => {
 	const adapters: ChannelAdapter[] = []
 
 	if (process.env.SLACK_BOT_TOKEN) {
-		const { SlackAdapter } = await import("@openzosma/adapter-slack")
+		// Dynamic import: adapter-slack is an optional package. We avoid listing
+		// it as a dependency to prevent a circular build edge (adapter-slack
+		// depends on gateway for types). The cast provides type safety without
+		// requiring TS module resolution.
+		const mod = (await import(/* webpackIgnore: true */ "@openzosma/adapter-slack" as string)) as {
+			SlackAdapter: new (config: SlackAdapterConfig) => ChannelAdapter
+		}
 		adapters.push(
-			new SlackAdapter({
+			new mod.SlackAdapter({
 				botToken: process.env.SLACK_BOT_TOKEN,
 				appToken: process.env.SLACK_APP_TOKEN,
 			}),

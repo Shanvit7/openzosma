@@ -208,6 +208,70 @@ export const createApp = (sessionManager: SessionManager, pool?: Pool, auth?: Au
 	})
 
 	// -----------------------------------------------------------------------
+	// Knowledge base sync routes
+	// -----------------------------------------------------------------------
+
+	/**
+	 * POST /api/v1/kb/sync -- push a file change to the user's sandbox KB.
+	 *
+	 * Body: { action: "write" | "delete", path: string, content?: string }
+	 *
+	 * Used by the Next.js dashboard to sync KB edits into the running sandbox.
+	 */
+	app.post("/api/v1/kb/sync", requirePermission("sessions", "write"), async (c) => {
+		const userId = c.get("userId") as string | undefined
+		if (!userId) {
+			return c.json({ error: { code: "AUTH_REQUIRED", message: "userId is required" } }, 400)
+		}
+
+		const body = await c.req.json<{ action: string; path: string; content?: string }>()
+		if (!body.action || !body.path) {
+			return c.json({ error: { code: "INVALID_REQUEST", message: "action and path are required" } }, 400)
+		}
+
+		try {
+			if (body.action === "write") {
+				if (typeof body.content !== "string") {
+					return c.json({ error: { code: "INVALID_REQUEST", message: "content is required for write action" } }, 400)
+				}
+				await sessionManager.pushKBFile(userId, body.path, body.content)
+			} else if (body.action === "delete") {
+				await sessionManager.deleteKBFile(userId, body.path)
+			} else {
+				return c.json({ error: { code: "INVALID_REQUEST", message: `Unknown action: ${body.action}` } }, 400)
+			}
+
+			return c.json({ ok: true })
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "Unknown error"
+			console.error(`[gateway] KB sync failed: ${message}`)
+			return c.json({ error: { code: "SYNC_FAILED", message } }, 500)
+		}
+	})
+
+	/**
+	 * GET /api/v1/kb/pull -- pull all KB files from the user's sandbox.
+	 *
+	 * Returns { files: KBFileEntry[] } with content for each file.
+	 * Used by the "Sync from Agent" button in the dashboard.
+	 */
+	app.get("/api/v1/kb/pull", requirePermission("sessions", "read"), async (c) => {
+		const userId = c.get("userId") as string | undefined
+		if (!userId) {
+			return c.json({ error: { code: "AUTH_REQUIRED", message: "userId is required" } }, 400)
+		}
+
+		try {
+			const files = await sessionManager.pullKB(userId)
+			return c.json({ files })
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "Unknown error"
+			console.error(`[gateway] KB pull failed: ${message}`)
+			return c.json({ error: { code: "PULL_FAILED", message } }, 500)
+		}
+	})
+
+	// -----------------------------------------------------------------------
 	// Agent config routes (require DB pool)
 	// -----------------------------------------------------------------------
 

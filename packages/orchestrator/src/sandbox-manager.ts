@@ -431,7 +431,7 @@ export class SandboxManager {
 			if (existsSync(kbRoot)) {
 				try {
 					console.log(`[orchestrator] Uploading knowledge base from ${kbRoot} to ${record.sandboxName}`)
-					await this.openshell.upload(record.sandboxName, kbRoot, "/workspace/")
+					await this.openshell.uploadDir(record.sandboxName, kbRoot, "/workspace/")
 					console.log("[orchestrator] Knowledge base uploaded successfully")
 				} catch (err) {
 					const msg = err instanceof Error ? err.message : String(err)
