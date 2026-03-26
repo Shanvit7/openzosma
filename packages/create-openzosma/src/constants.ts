@@ -77,7 +77,7 @@ export const LOCAL_MODEL_DEFAULTS = {
 
 export const OPENSHELL_INSTALL_CURL =
 	"curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh"
-export const OPENSHELL_INSTALL_UV = "uv tool install -U openshell"
+export const OPENSHELL_INSTALL_UV = "uv tool install -U --force openshell"
 
 export const SANDBOX_IMAGE_DEFAULT = "openzosma/sandbox-server:v0.1.0"
 

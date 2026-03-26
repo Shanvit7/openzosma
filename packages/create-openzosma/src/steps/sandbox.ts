@@ -88,7 +88,7 @@ export const configureSandbox = async (openshellAvailable: boolean): Promise<San
 
 		if (hasOpenshell) {
 			// Verify installation
-			const version = await tryCommand("openshell version")
+			const version = await tryCommand("openshell --version")
 			if (version) {
 				log.success(`OpenShell installed: ${version}`)
 			} else {

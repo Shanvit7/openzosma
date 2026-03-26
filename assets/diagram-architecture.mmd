@@ -1,0 +1,53 @@
+graph TB
+    subgraph Clients["Clients"]
+        Web["Web Dashboard<br/>(Next.js)"]
+        Mobile["Mobile App<br/>(React Native)"]
+        Slack["Slack"]
+        WhatsApp["WhatsApp"]
+        A2A["A2A Agents"]
+    end
+
+    subgraph Gateway["API Gateway (Hono)"]
+        REST["REST API"]
+        WS["WebSocket"]
+        A2AEndpoint["A2A Protocol"]
+        Auth["Auth<br/>(Better Auth)"]
+        SM["Session Manager<br/>(dual mode)"]
+    end
+
+    subgraph Orchestrator["Orchestrator (in-process library)"]
+        SBM["Sandbox Manager"]
+        OSHTTP["HTTP / SSE Client"]
+    end
+
+    subgraph Sandboxes["Per-User OpenShell Sandboxes"]
+        SB1["Sandbox (User A)<br/>sandbox-server + pi-agent"]
+        SB2["Sandbox (User B)<br/>sandbox-server + pi-agent"]
+        SB3["Sandbox (User C)<br/>sandbox-server + pi-agent"]
+    end
+
+    DB[("PostgreSQL")]
+    Cache[("Valkey")]
+    LLM["LLM APIs<br/>(OpenAI, Anthropic, etc.)"]
+
+    Web & Mobile & Slack & WhatsApp & A2A --> Gateway
+    REST & WS & A2AEndpoint --> Auth --> SM
+    SM -->|"local mode"| LLM
+    SM -->|"orchestrator mode"| Orchestrator
+    SBM --> OSHTTP
+    OSHTTP -->|"HTTP / SSE"| SB1 & SB2 & SB3
+    SB1 & SB2 & SB3 --> LLM
+    Gateway --> DB
+    Gateway --> Cache
+
+    classDef client fill:#6366f1,stroke:#4f46e5,color:#fff
+    classDef gateway fill:#0ea5e9,stroke:#0284c7,color:#fff
+    classDef orch fill:#f59e0b,stroke:#d97706,color:#fff
+    classDef sandbox fill:#10b981,stroke:#059669,color:#fff
+    classDef infra fill:#64748b,stroke:#475569,color:#fff
+
+    class Web,Mobile,Slack,WhatsApp,A2A client
+    class REST,WS,A2AEndpoint,Auth,SM gateway
+    class SBM,OSHTTP orch
+    class SB1,SB2,SB3 sandbox
+    class DB,Cache,LLM infra

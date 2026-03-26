@@ -25,67 +25,26 @@ Delegate tasks through natural conversation from WhatsApp, Slack, or a web dashb
 </p>
 
 <p>
-  <a href="#quick-start">Quick Start</a> &middot;
-  <a href="./ARCHITECTURE.md">Architecture</a> &middot;
-  <a href="./CONTRIBUTING.md">Contributing</a> &middot;
-  <a href="./docs/">Docs</a>
+  <a href="#get-started">Get Started</a> &middot;
+  <a href="#how-it-works">How It Works</a> &middot;
+  <a href="#architecture">Architecture</a> &middot;
+  <a href="./ARCHITECTURE.md">Full Design Doc</a> &middot;
+  <a href="./CONTRIBUTING.md">Contributing</a>
 </p>
 
 </div>
 
 ---
 
-OpenZosma is an open-source, self-hosted platform for creating hierarchical AI agents that act as digital work twins for your team. Configure an agent org chart that mirrors your business structure, delegate tasks through natural conversation, and manage your operations from anywhere -- your phone, WhatsApp, Slack, or a web dashboard. No laptop required.
+## Get Started
 
-## How It Works
-
-You define a hierarchy of agents that mirrors your organization. Each agent has a role, a set of capabilities, and knows which agents report to it. You talk to the top-level agent, and it delegates work down the chain.
-
-```
-You (from your phone, WhatsApp, or Slack)
-  |
-  CEO Agent
-  |
-  +-- Sales Manager Agent
-  |       +-- Lead Qualifier Agent
-  |       +-- CRM Updater Agent
-  |
-  +-- Operations Agent
-  |       +-- Invoice Processor Agent
-  |       +-- Inventory Tracker Agent
-  |
-  +-- Support Agent
-          +-- Ticket Router Agent
-          +-- FAQ Responder Agent
-```
-
-**Example:** You message your CEO Agent from WhatsApp: "What were last week's sales numbers and are there any open support tickets over 48 hours?" The CEO Agent delegates to the Sales Manager Agent and Support Agent in parallel. They query your connected systems, and you get a consolidated answer back -- all from a single message on your phone.
-
-Agents don't replace your team. They handle the routine lookups, status checks, data entry, and coordination that eat up your team's day -- so your people can focus on work that requires human judgment.
-
-## Key Features
-
-* **Hierarchical agents** -- Configure org-chart-like agent trees. Manager agents delegate to specialist agents automatically.
-
-* **Talk from anywhere** -- Web dashboard, mobile app, WhatsApp, Slack, or agent-to-agent via the [A2A protocol](https://github.com/google/A2A).
-
-* **Self-hosted** -- Your data stays on your infrastructure. One instance = one organization.
-
-* **Connect your tools** -- Integrate with databases, CRMs, email, and other business systems through configurable connectors.
-
-* **Secure by design** -- Each agent session runs in an isolated sandbox ([NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) + [OpenShell](https://github.com/NVIDIA/OpenShell)) with Landlock, seccomp, and network namespace isolation.
-
-* **Open source** -- Apache 2.0 license. No vendor lock-in, no usage fees, no data leaving your network.
-
-## Quick Start
-
-The fastest way to get running is the interactive setup CLI. It handles cloning, environment configuration, Docker services, database migrations, and the initial build in one shot:
+One command sets up everything -- cloning, environment, Docker services, database migrations, and the first build:
 
 ```bash
 pnpm create openzosma
 ```
 
-or with npx:
+or
 
 ```bash
 npx create-openzosma
@@ -93,11 +52,18 @@ npx create-openzosma
 
 The CLI walks you through choosing an LLM provider, configuring PostgreSQL, setting up auth secrets, and optionally enabling sandboxed execution. At the end it offers to start the gateway and dashboard for you.
 
-**Already cloned the repo?** Run `pnpm setup` from the repo root instead. The CLI detects the existing checkout and skips the clone step.
+**Already cloned?** Run `pnpm setup` from the repo root instead. The CLI detects the existing checkout and skips the clone step.
 
-### Manual Setup
+### Requirements
 
-If you prefer to configure things by hand:
+- **Node.js** >= 22
+- **pnpm** (latest)
+- **Docker** and **Docker Compose**
+- **Git**
+- **OpenShell CLI** (optional -- only needed for sandbox mode)
+
+<details>
+<summary><strong>Manual setup (without the CLI)</strong></summary>
 
 ```bash
 git clone https://github.com/zosmaai/openzosma.git
@@ -111,14 +77,14 @@ docker compose up -d
 cp .env.example .env.local
 # Edit .env.local -- at minimum set an LLM API key and AUTH_SECRET
 
+# Build all packages (required before migrations)
+pnpm run build
+
 # Run database migrations
 pnpm db:migrate
 pnpm db:migrate:auth
 
-# Build all packages
-pnpm run build
-
-# Start the gateway and dashboard in separate terminals
+# Start the gateway and dashboard
 pnpm --filter @openzosma/gateway dev   # Terminal 1 (port 4000)
 pnpm --filter @openzosma/web dev       # Terminal 2 (port 3000)
 ```
@@ -127,9 +93,56 @@ Open <http://localhost:3000>, sign up, and start a conversation.
 
 > **Note:** The gateway `dev` script loads `../../.env.local` automatically via `--env-file`. If you need a different env file, run `npx tsx --env-file=<path> src/index.ts` from `packages/gateway/`.
 
-### Running with Sandboxes (Optional)
+</details>
 
-To run agent sessions inside isolated OpenShell sandboxes instead of in-process:
+---
+
+## What is OpenZosma?
+
+OpenZosma is an open-source, self-hosted platform for creating hierarchical AI agents that act as digital work twins for your team. Configure an agent org chart that mirrors your business structure, delegate tasks through natural conversation, and manage your operations from anywhere -- your phone, WhatsApp, Slack, or a web dashboard. No laptop required.
+
+Agents don't replace your team. They handle the routine lookups, status checks, data entry, and coordination that eat up your team's day -- so your people can focus on work that requires human judgment.
+
+### Key Features
+
+- **Hierarchical agents** -- Configure org-chart-like agent trees. Manager agents delegate to specialist agents automatically.
+- **Talk from anywhere** -- Web dashboard, mobile app, WhatsApp, Slack, or agent-to-agent via the [A2A protocol](https://github.com/google/A2A).
+- **Self-hosted** -- Your data stays on your infrastructure. One instance = one organization.
+- **Connect your tools** -- Integrate with databases, CRMs, email, and other business systems through configurable connectors.
+- **Secure by design** -- Each agent session runs in an isolated sandbox ([NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) + [OpenShell](https://github.com/NVIDIA/OpenShell)) with Landlock, seccomp, and network namespace isolation.
+- **Open source** -- Apache 2.0 license. No vendor lock-in, no usage fees, no data leaving your network.
+
+---
+
+## How It Works
+
+You define a hierarchy of agents that mirrors your organization. Each agent has a role, a set of capabilities, and knows which agents report to it. You talk to the top-level agent, and it delegates work down the chain.
+
+<div align="center">
+  <img src="assets/diagram-hierarchy.png" alt="Agent Hierarchy" width="600" />
+</div>
+
+**Example:** You message your CEO Agent from WhatsApp: *"What were last week's sales numbers and are there any open support tickets over 48 hours?"* The CEO Agent delegates to the Sales Manager Agent and Support Agent in parallel. They query your connected systems, and you get a consolidated answer back -- all from a single message on your phone.
+
+---
+
+## Architecture
+
+<div align="center">
+  <img src="assets/diagram-architecture.png" alt="Architecture" width="750" />
+</div>
+
+The gateway runs in two modes controlled by `OPENZOSMA_SANDBOX_MODE`:
+
+| Mode | How it works | Best for |
+|------|-------------|----------|
+| **`local`** (default) | pi-agent runs in-process inside the gateway. No OpenShell needed. | Development |
+| **`orchestrator`** | Each user gets a persistent OpenShell sandbox. The orchestrator manages sandbox lifecycle and proxies messages via HTTP/SSE. | Production |
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, data flow, and component details.
+
+<details>
+<summary><strong>Running with sandboxes (orchestrator mode)</strong></summary>
 
 ```bash
 # 1. Install the OpenShell CLI and start the gateway (bootstraps a local K3s cluster)
@@ -151,85 +164,42 @@ Use a versioned tag (e.g. `v0.1.0`), not `:latest`. K3s sets `imagePullPolicy: A
 
 See [infra/openshell/README.md](./infra/openshell/README.md) for sandbox image details and policy configuration.
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full development setup, environment variables, and conventions.
+</details>
 
-## Architecture
-
-```
-Clients (Web, Mobile, WhatsApp, Slack, A2A agents)
-                    |
-            API Gateway (REST / WebSocket / A2A)
-                    |
-              Orchestrator (in-process library)
-                    |  HTTP / SSE
-                    v
-            Per-user OpenShell Sandboxes
-            (one persistent sandbox per user)
-```
-
-The gateway runs in two modes controlled by `OPENZOSMA_SANDBOX_MODE`:
-
-* **`local`** (default) -- pi-agent runs in-process inside the gateway. No OpenShell needed. Good for development.
-
-* **`orchestrator`** -- Each user gets a persistent OpenShell sandbox. The orchestrator (an in-process library, not a separate service) manages sandbox lifecycle and proxies messages to the sandbox-server via HTTP/SSE. Sandboxes are created on demand and suspended after idle timeout.
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design.
-
-## Documentation
-
-| Document                                         | Description                                           |
-| ------------------------------------------------ | ----------------------------------------------------- |
-| [ARCHITECTURE.md](./ARCHITECTURE.md)             | System design, component interactions, data flow      |
-| [CONTRIBUTING.md](./CONTRIBUTING.md)             | Development setup, environment variables, conventions |
-| [packages/db/README.md](./packages/db/README.md) | Database migrations, schemas, query module            |
-| [docs/](./docs/)                                 | Phase-by-phase implementation plans                   |
+---
 
 ## Tech Stack
 
-| Component      | Technology                                                 |
-| -------------- | ---------------------------------------------------------- |
-| Runtime        | Node.js 22 (TypeScript)                                    |
-| HTTP Server    | Hono                                                       |
-| Internal RPC   | HTTP/SSE (orchestrator to sandbox-server inside OpenShell) |
-| Database       | PostgreSQL (raw SQL via `pg`, migrations via `db-migrate`) |
-| Auth           | Better Auth                                                |
-| Sandbox        | NVIDIA NemoClaw + OpenShell                                |
-| Web Dashboard  | Next.js 16, React 19, Tailwind CSS v4                      |
-| Mobile         | React Native (planned)                                     |
-| Agent Protocol | [Google A2A](https://github.com/google/A2A)                |
+| Component | Technology |
+|-----------|-----------|
+| Runtime | Node.js 22 (TypeScript) |
+| HTTP Server | Hono |
+| Database | PostgreSQL (raw SQL via `pg`, migrations via `db-migrate`) |
+| Auth | Better Auth |
+| Sandbox | NVIDIA NemoClaw + OpenShell |
+| Web Dashboard | Next.js 16, React 19, Tailwind CSS v4 |
+| Mobile | React Native (planned) |
+| Agent Protocol | [Google A2A](https://github.com/google/A2A) |
+| Cache / Pub-Sub | Valkey (ioredis) |
+| Internal Comms | HTTP / SSE (orchestrator to sandbox-server) |
 
-## Repository Structure
+---
 
-| Phase                                     | Description                                   | Duration  | Status                                             |
-| ----------------------------------------- | --------------------------------------------- | --------- | -------------------------------------------------- |
-| [Phase 1](./docs/PHASE-1-MULTITENANT.md)  | Multi-instance pi-agent refactor (in pi-mono) | 3-4 days  | Complete                                           |
-| [Phase 2](./docs/PHASE-2-MONOREPO.md)     | OpenZosma monorepo setup + DB schema + auth   | 1 week    | Complete                                           |
-| [Phase 3](./docs/PHASE-3-GATEWAY.md)      | API Gateway + A2A + auth                      | 1 week    | Complete (REST + A2A + WebSocket + auth)           |
-| [Phase 4](./docs/PHASE-4-ORCHESTRATOR.md) | Orchestrator + OpenShell sandbox integration  | 1.5 weeks | In progress (core infra done, integration pending) |
-| [Phase 5](./docs/PHASE-5-ADAPTERS.md)     | Channel adapters (Slack, WhatsApp)            | 1 week    | Not started                                        |
-| [Phase 6](./docs/PHASE-6-SKILLS.md)       | Enterprise skills (database tool, reports)    | 2 weeks   | Not started                                        |
-| [Phase 7](./docs/PHASE-7-DASHBOARD.md)    | Web dashboard (Next.js)                       | 2 weeks   | In progress (MVP)                                  |
+## Supported LLM Providers
 
-**MVP (Phases 1-4):** \~4 weeks
-**Full platform (Phases 1-7):** \~10 weeks
+| Provider | Default model |
+|----------|--------------|
+| Anthropic | Claude Sonnet 4 |
+| OpenAI | GPT-4o |
+| Google | Gemini 2.5 Flash |
+| Groq | Llama 3.3 70B |
+| xAI | Grok 3 |
+| Mistral | Mistral Large |
+| Local model | Any OpenAI-compatible endpoint (Ollama, vLLM, etc.) |
 
-## Gateway API
+---
 
-The gateway (`packages/gateway/`) exposes REST, WebSocket, and A2A protocol endpoints on port 4000. See [PHASE-3-GATEWAY.md](./docs/PHASE-3-GATEWAY.md) for the full spec.
-
-## Self-Hosted
-
-One instance = one organization. Deploy with Docker Compose for development or Kubernetes for production.
-
-## Related Repositories
-
-* **[pi-mono](https://github.com/badlogic/pi-mono)** -- Agent SDK. Published as npm packages (`pi-ai`, `pi-agent-core`, `pi-coding-agent`, etc.). OpenZosma depends on these packages.
-
-* **[NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw)** -- Sandbox runtime. Runs agents inside OpenShell sandboxes with Landlock + seccomp + network namespace isolation, deny-by-default network policies, and inference routing.
-
-* **[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell)** -- Underlying sandbox infrastructure. K3s-based isolation with declarative YAML policies.
-
-* **[Google A2A](https://github.com/google/A2A)** -- Agent-to-Agent protocol. JSON-RPC 2.0 over HTTPS with SSE streaming and gRPC support.
+## Project Structure
 
 ```
 openzosma/
@@ -237,23 +207,61 @@ openzosma/
     web/                  Next.js dashboard
     mobile/               React Native app (planned)
   packages/
-    gateway/              API gateway (REST + WebSocket + A2A), dual-mode session manager
-    orchestrator/         Sandbox lifecycle, session proxying, health checks, quotas
+    gateway/              API gateway (REST + WebSocket + A2A)
+    orchestrator/         Sandbox lifecycle, session proxying, health checks
     agents/               Agent provider interface + implementations
-    sandbox/              OpenShell CLI wrapper (TypeScript)
-    sandbox-server/       Hono HTTP server running inside sandbox containers
+    sandbox/              OpenShell CLI wrapper
+    sandbox-server/       HTTP server running inside sandbox containers
     db/                   Database migrations and query module
     auth/                 Better Auth setup
     a2a/                  A2A protocol implementation
-    grpc/                 Proto definitions + generated stubs (not used at runtime)
+    grpc/                 Proto definitions + generated stubs
     sdk/                  Client SDK (@openzosma/sdk)
     adapters/             Channel adapters (Slack, WhatsApp)
     skills/               Enterprise skills (reports, charts)
   proto/                  Protobuf service definitions
   infra/
-    openshell/            Sandbox Dockerfile, policies, entrypoint script
-  docs/                   Implementation plans and design docs
+    openshell/            Sandbox Dockerfile, policies, entrypoint
+  docs/                   Phase implementation plans
 ```
+
+---
+
+## Roadmap
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| [Phase 1](./docs/PHASE-1-MULTITENANT.md) | Multi-instance pi-agent refactor (in pi-mono) | Complete |
+| [Phase 2](./docs/PHASE-2-MONOREPO.md) | Monorepo setup + DB schema + auth | Complete |
+| [Phase 3](./docs/PHASE-3-GATEWAY.md) | API Gateway + A2A + auth | Complete |
+| [Phase 4](./docs/PHASE-4-ORCHESTRATOR.md) | Orchestrator + OpenShell sandbox integration | In progress |
+| [Phase 5](./docs/PHASE-5-ADAPTERS.md) | Channel adapters (Slack, WhatsApp) | Not started |
+| [Phase 6](./docs/PHASE-6-SKILLS.md) | Enterprise skills (database tool, reports) | Not started |
+| [Phase 7](./docs/PHASE-7-DASHBOARD.md) | Web dashboard | In progress (MVP) |
+
+**MVP (Phases 1-4):** ~4 weeks &nbsp;|&nbsp; **Full platform (Phases 1-7):** ~10 weeks
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | System design, component interactions, data flow |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Development setup, environment variables, conventions |
+| [packages/db/README.md](./packages/db/README.md) | Database migrations, schemas, query module |
+| [docs/](./docs/) | Phase-by-phase implementation plans |
+
+---
+
+## Related Projects
+
+- **[pi-mono](https://github.com/badlogic/pi-mono)** -- Agent SDK (`pi-ai`, `pi-agent-core`, `pi-coding-agent`)
+- **[NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw)** -- Sandbox runtime with Landlock + seccomp isolation
+- **[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell)** -- K3s-based sandbox infrastructure
+- **[Google A2A](https://github.com/google/A2A)** -- Agent-to-Agent protocol (JSON-RPC 2.0)
+
+---
 
 ## Contributors
 

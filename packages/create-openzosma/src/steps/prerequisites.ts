@@ -45,7 +45,7 @@ export const checkPrerequisites = async (): Promise<{ openshellAvailable: boolea
 	checks.push({ name: "Git", version: gitVersion ? gitVersion : null, required: true })
 
 	// OpenShell (optional)
-	const openshellVersion = await tryCommand("openshell version")
+	const openshellVersion = await tryCommand("openshell --version")
 	const openshellParsed = openshellVersion?.match(/(\d+\.\d+\.\d+)/)?.[1] ?? openshellVersion
 	checks.push({
 		name: "OpenShell CLI",
