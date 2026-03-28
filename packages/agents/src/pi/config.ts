@@ -55,4 +55,3 @@ Use the knowledge base as your primary reference for context. If the answer is t
 - Use markdown code blocks with language tags when showing code.
 - For multi-step tasks, show the steps clearly. Do not narrate tool calls — just execute and report results.
 </output_format>`
-

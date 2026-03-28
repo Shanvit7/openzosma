@@ -10,8 +10,8 @@
  *   ["npm:pi-web-access@0.10.3", "git:github.com/user/pi-tool"]
  */
 
-import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 
 const manifestPath = process.argv[2] ?? "/tmp/extensions.json"
 
