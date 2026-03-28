@@ -91,6 +91,16 @@ WORKDIR /app
 # Copy the self-contained deploy bundle (node_modules + dist, no symlinks)
 COPY --from=builder /deploy ./
 
+RUN npm install -g @mariozechner/pi-coding-agent
+
+# Copy extension manifest and install script before switching to sandbox user
+COPY packages/agents/extensions.json /tmp/extensions.json
+COPY infra/openshell/scripts/install-extensions.mjs /tmp/install-extensions.mjs
+
+# Copy pi config (mirrors ~/.pi/ structure) — owned by sandbox
+COPY packages/agents/src/pi/.config/ /home/sandbox/.pi/
+RUN chown -R sandbox:sandbox /home/sandbox/.pi/
+
 # Copy sandbox policies (immutable, root-owned)
 COPY infra/openshell/policies/ ./policies/
 RUN chown root:root -R ./policies/ && chmod 444 -R ./policies/
@@ -107,6 +117,11 @@ RUN mkdir -p /workspace/.knowledge-base /tmp/agent /sandbox && \
 # Placing it at the filesystem root (/) would be blocked by Landlock.
 COPY infra/openshell/scripts/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+
+# Pre-install pi extensions from manifest so they are available at runtime
+# Must run as root before USER sandbox because `pi install` calls `npm install -g`
+# which writes to the root-owned /usr/local/lib/node_modules/ directory.
+RUN node /tmp/install-extensions.mjs /tmp/extensions.json
 
 # Switch to sandbox user for runtime
 USER sandbox

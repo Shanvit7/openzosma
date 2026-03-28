@@ -12,8 +12,6 @@ export interface MemoryConfig {
 
 /** Result of bootstrapping the memory extensions */
 export interface MemoryBootstrapResult {
-	/** Extension file paths to pass to DefaultResourceLoader.additionalExtensionPaths */
-	paths: string[]
 	/** The resolved memory directory */
 	memoryDir: string
 }

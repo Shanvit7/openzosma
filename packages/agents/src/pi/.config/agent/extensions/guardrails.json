@@ -1,0 +1,13 @@
+{
+	"enabled": false,
+	"features": {
+		"policies": false,
+		"permissionGate": false
+	},
+	"permissionGate": {
+		"requireConfirmation": false,
+		"explainCommands": false,
+		"explainModel": null,
+		"explainTimeout": 5000
+	}
+}
