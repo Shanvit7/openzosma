@@ -65,22 +65,39 @@ FROM node:22-slim
 # make + g++ are required for native npm modules that use node-gyp.
 # Node.js and npm are already present from the node:22-slim base image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    g++ \
     git \
+    iproute2 \
+    jq \
+    less \
+    libcairo2-dev \
+    libgif-dev \
+    libjpeg-dev \
+    libpango1.0-dev \
+    librsvg2-dev \
+    make \
+    pkg-config \
     python3 \
     python3-pip \
     python3-venv \
     tini \
-    curl \
-    iproute2 \
     tree \
-    jq \
-    wget \
-    less \
     unzip \
+    wget \
     zip \
-    make \
-    g++ \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python reporting libraries
+RUN pip3 install --break-system-packages \
+    matplotlib \
+    numpy \
+    openpyxl \
+    pandas \
+    python-pptx \
+    reportlab \
+    seaborn
 
 # Create sandbox user (OpenShell convention: non-root execution)
 # --home is required so homedir() returns a real path; bootstrapPiExtensions()
@@ -123,7 +140,7 @@ RUN chown root:root -R ./skills/ && chmod 444 -R ./skills/
 # In per-user persistent sandboxes, this directory persists across sessions.
 # /sandbox is the OpenShell writable root where .env is uploaded.
 # .knowledge-base is pre-created so the agent prompt doesn't error on ls.
-RUN mkdir -p /workspace/.knowledge-base /tmp/agent /sandbox && \
+RUN mkdir -p /workspace/.knowledge-base /workspace/output /tmp/agent /sandbox && \
     chown -R sandbox:sandbox /workspace /tmp/agent /sandbox
 
 # Copy entrypoint into /app/ which is already in the policy read_only allowlist.
