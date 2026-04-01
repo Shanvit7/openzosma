@@ -8,6 +8,8 @@ import type {
 	SandboxHealthResponse,
 	SandboxSessionInfo,
 	SandboxSessionListResponse,
+	UserFileEntry,
+	UserFilesListResponse,
 } from "./types.js"
 
 const log = createLogger({ component: "orchestrator" })
@@ -108,6 +110,9 @@ export class SandboxHttpClient {
 	 * is a JSON-encoded AgentStreamEvent.
 	 */
 	async *sendMessage(sessionId: string, content: string, signal?: AbortSignal): AsyncGenerator<AgentStreamEvent> {
+		log.info("Sending message to sandbox", { sessionId, contentLength: content.length })
+		const fetchStart = Date.now()
+
 		const res = await this.fetch(`/sessions/${sessionId}/messages`, {
 			method: "POST",
 			body: JSON.stringify({ content }),
@@ -121,12 +126,14 @@ export class SandboxHttpClient {
 			throw new Error(`Sandbox message request failed (${res.status}): ${text}`)
 		}
 
+		log.debug("Sandbox SSE stream opened", { sessionId, status: res.status, fetchMs: Date.now() - fetchStart })
+
 		const body = res.body
 		if (!body) {
 			throw new Error("No response body from sandbox-server")
 		}
 
-		yield* this.parseSSE(body, signal)
+		yield* this.parseSSE(body, signal, sessionId)
 	}
 
 	async cancelSession(sessionId: string): Promise<boolean> {
@@ -136,6 +143,35 @@ export class SandboxHttpClient {
 		} catch {
 			return false
 		}
+	}
+
+	// -----------------------------------------------------------------------
+	// File upload
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Upload files into the sandbox workspace.
+	 *
+	 * Each file is base64-encoded and written to the specified subdirectory
+	 * within /workspace/ inside the sandbox.
+	 *
+	 * @returns Array of successfully uploaded file paths.
+	 */
+	async uploadFiles(
+		files: Array<{ filename: string; content: string; dir?: string }>,
+	): Promise<Array<{ filename: string; path: string }>> {
+		const res = await this.fetch("/upload", {
+			method: "POST",
+			body: JSON.stringify({ files }),
+		})
+
+		if (!res.ok) {
+			const text = await res.text().catch(() => `HTTP ${res.status}`)
+			throw new Error(`Sandbox file upload failed (${res.status}): ${text}`)
+		}
+
+		const body = (await res.json()) as { ok: boolean; uploaded: Array<{ filename: string; path: string }> }
+		return body.uploaded
 	}
 
 	// -----------------------------------------------------------------------
@@ -185,21 +221,180 @@ export class SandboxHttpClient {
 	}
 
 	// -----------------------------------------------------------------------
+	// User files
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Get the recursive directory tree of all user files.
+	 */
+	async getUserFilesTree(): Promise<UserFileEntry[]> {
+		const res = await this.fetch("/user-files/tree")
+		if (!res.ok) {
+			throw new Error(`Sandbox getUserFilesTree failed (${res.status})`)
+		}
+		const body = (await res.json()) as UserFilesListResponse
+		return body.entries
+	}
+
+	/**
+	 * List contents of a single directory within user-files.
+	 */
+	async listUserFiles(path = "/"): Promise<UserFileEntry[]> {
+		const res = await this.fetch(`/user-files/list?path=${encodeURIComponent(path)}`)
+		if (!res.ok) {
+			throw new Error(`Sandbox listUserFiles failed (${res.status})`)
+		}
+		const body = (await res.json()) as UserFilesListResponse
+		return body.entries
+	}
+
+	/**
+	 * Download a file from user-files. Returns the raw Response
+	 * so the caller can stream the body.
+	 */
+	async downloadUserFile(path: string): Promise<Response> {
+		const res = await this.fetch(`/user-files/download?path=${encodeURIComponent(path)}`)
+		if (!res.ok) {
+			const text = await res.text().catch(() => `HTTP ${res.status}`)
+			throw new Error(`Sandbox downloadUserFile failed (${res.status}): ${text}`)
+		}
+		return res
+	}
+
+	/**
+	 * Upload files to a directory within user-files.
+	 */
+	async uploadUserFiles(
+		dirPath: string,
+		files: Array<{ filename: string; content: string }>,
+	): Promise<UserFileEntry[]> {
+		const res = await this.fetch(`/user-files/upload?path=${encodeURIComponent(dirPath)}`, {
+			method: "POST",
+			body: JSON.stringify({ files }),
+		})
+		if (!res.ok) {
+			const text = await res.text().catch(() => `HTTP ${res.status}`)
+			throw new Error(`Sandbox uploadUserFiles failed (${res.status}): ${text}`)
+		}
+		const body = (await res.json()) as { ok: boolean; uploaded: UserFileEntry[] }
+		return body.uploaded
+	}
+
+	/**
+	 * Create a folder within user-files.
+	 */
+	async createUserFolder(path: string): Promise<UserFileEntry> {
+		const res = await this.fetch("/user-files/folder", {
+			method: "POST",
+			body: JSON.stringify({ path }),
+		})
+		if (!res.ok) {
+			const text = await res.text().catch(() => `HTTP ${res.status}`)
+			throw new Error(`Sandbox createUserFolder failed (${res.status}): ${text}`)
+		}
+		const body = (await res.json()) as { ok: boolean; entry: UserFileEntry }
+		return body.entry
+	}
+
+	/**
+	 * Rename or move a file/folder within user-files.
+	 */
+	async renameUserFile(from: string, to: string): Promise<UserFileEntry> {
+		const res = await this.fetch("/user-files/rename", {
+			method: "POST",
+			body: JSON.stringify({ from, to }),
+		})
+		if (!res.ok) {
+			const text = await res.text().catch(() => `HTTP ${res.status}`)
+			throw new Error(`Sandbox renameUserFile failed (${res.status}): ${text}`)
+		}
+		const body = (await res.json()) as { ok: boolean; entry: UserFileEntry }
+		return body.entry
+	}
+
+	/**
+	 * Delete a file or folder within user-files.
+	 */
+	async deleteUserFile(path: string): Promise<void> {
+		const res = await this.fetch(`/user-files?path=${encodeURIComponent(path)}`, {
+			method: "DELETE",
+		})
+		if (!res.ok && res.status !== 404) {
+			const text = await res.text().catch(() => `HTTP ${res.status}`)
+			throw new Error(`Sandbox deleteUserFile failed (${res.status}): ${text}`)
+		}
+	}
+
+	// -----------------------------------------------------------------------
 	// SSE parser
 	// -----------------------------------------------------------------------
 
-	private async *parseSSE(body: ReadableStream<Uint8Array>, signal?: AbortSignal): AsyncGenerator<AgentStreamEvent> {
+	private async *parseSSE(
+		body: ReadableStream<Uint8Array>,
+		signal?: AbortSignal,
+		sessionId?: string,
+	): AsyncGenerator<AgentStreamEvent> {
 		const reader = body.getReader()
 		const decoder = new TextDecoder()
 		let buffer = ""
 		let currentData = ""
 		let chunkCount = 0
+		let eventCount = 0
+		const startTime = Date.now()
+
+		/**
+		 * Race reader.read() against the abort signal. Without this,
+		 * reader.read() can hang indefinitely if the sandbox agent
+		 * freezes but the TCP connection stays open. The native fetch
+		 * signal should also abort the read, but this is defense-in-depth.
+		 */
+		const readWithSignal = async (): Promise<{ done: boolean; value?: Uint8Array }> => {
+			if (!signal) return reader.read()
+
+			return new Promise<{ done: boolean; value?: Uint8Array }>((resolve, reject) => {
+				if (signal.aborted) {
+					reject(new DOMException("Aborted", "AbortError"))
+					return
+				}
+
+				let settled = false
+
+				const onAbort = () => {
+					if (!settled) {
+						settled = true
+						reject(new DOMException("Aborted", "AbortError"))
+					}
+				}
+
+				signal.addEventListener("abort", onAbort, { once: true })
+
+				reader
+					.read()
+					.then((result) => {
+						if (!settled) {
+							settled = true
+							signal.removeEventListener("abort", onAbort)
+							resolve(result)
+						}
+					})
+					.catch((err) => {
+						if (!settled) {
+							settled = true
+							signal.removeEventListener("abort", onAbort)
+							reject(err)
+						}
+					})
+			})
+		}
 
 		try {
 			while (true) {
-				if (signal?.aborted) break
+				if (signal?.aborted) {
+					log.debug("parseSSE aborted by signal", { sessionId, chunkCount, eventCount })
+					break
+				}
 
-				const { done, value } = await reader.read()
+				const { done, value } = await readWithSignal()
 				if (done) {
 					break
 				}
@@ -219,15 +414,48 @@ export class SandboxHttpClient {
 						// Empty line = end of event
 						try {
 							const event = JSON.parse(currentData) as AgentStreamEvent
+							eventCount++
 							yield event
 						} catch (e) {
-							log.error("parseSSE error", { error: e instanceof Error ? e.message : String(e) })
+							log.error("parseSSE error", { sessionId, error: e instanceof Error ? e.message : String(e) })
 						}
 						currentData = ""
 					}
 				}
 			}
+
+			// Flush any remaining data left in the buffer after stream ends.
+			// The last SSE event (typically turn_end) may not have a trailing
+			// blank line before the connection closes.
+			if (buffer.startsWith("data:")) {
+				currentData += buffer.slice(5).trimStart()
+			}
+			if (currentData) {
+				try {
+					const event = JSON.parse(currentData) as AgentStreamEvent
+					eventCount++
+					yield event
+				} catch (e) {
+					log.error("parseSSE flush error", { sessionId, error: e instanceof Error ? e.message : String(e) })
+				}
+			}
+
+			log.info("SSE stream completed", {
+				sessionId,
+				chunkCount,
+				eventCount,
+				durationMs: Date.now() - startTime,
+			})
 		} finally {
+			// Cancel the reader (signals the server that we're done), then
+			// release the lock. Without cancel(), the sandbox SSE stream
+			// stays open and the agent loop continues running even when the
+			// gateway/Slack adapter has timed out.
+			try {
+				await reader.cancel()
+			} catch {
+				// Ignore cancel errors (already closed, etc.)
+			}
 			reader.releaseLock()
 		}
 	}

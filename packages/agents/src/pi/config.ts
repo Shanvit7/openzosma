@@ -1,14 +1,3 @@
-import type {
-	GuardrailsExtensionConfig,
-	SubagentsExtensionConfig,
-	WebSearchExtensionConfig,
-} from "./extension-types.js"
-export type {
-	GuardrailsExtensionConfig,
-	WebSearchExtensionConfig,
-	SubagentsExtensionConfig,
-} from "./extension-types.js"
-
 /** Preferred providers in priority order when auto-detecting. */
 export const PROVIDER_PREFERENCE = ["anthropic", "openai", "google", "groq", "xai", "mistral"] as const
 
@@ -66,29 +55,3 @@ Use the knowledge base as your primary reference for context. If the answer is t
 - Use markdown code blocks with language tags when showing code.
 - For multi-step tasks, show the steps clearly. Do not narrate tool calls — just execute and report results.
 </output_format>`
-
-// ---------------------------------------------------------------------------
-// Extension configs
-// ---------------------------------------------------------------------------
-
-export const GUARDRAILS_CONFIG: GuardrailsExtensionConfig = {
-	enabled: false,
-	features: {
-		policies: false,
-		permissionGate: false,
-	},
-	permissionGate: {
-		requireConfirmation: false,
-		explainCommands: false,
-		explainModel: null,
-		explainTimeout: 5000,
-	},
-}
-
-export const WEB_SEARCH_CONFIG: WebSearchExtensionConfig = {
-	provider: "auto",
-}
-
-export const SUBAGENTS_CONFIG: SubagentsExtensionConfig = {
-	asyncByDefault: false,
-}

@@ -29,15 +29,19 @@ WORKDIR /build
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/sandbox-server/package.json packages/sandbox-server/
 COPY packages/agents/package.json packages/agents/
+COPY packages/logger/package.json packages/logger/
+COPY packages/memory/package.json packages/memory/
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
 # Copy source and build
+COPY packages/logger/ packages/logger/
 COPY packages/agents/ packages/agents/
 COPY packages/memory/ packages/memory/
 COPY packages/sandbox-server/ packages/sandbox-server/
 
+RUN pnpm --filter @openzosma/logger run build
 RUN pnpm --filter @openzosma/agents run build
 RUN pnpm --filter @openzosma/sandbox-server run build
 
@@ -91,9 +95,28 @@ WORKDIR /app
 # Copy the self-contained deploy bundle (node_modules + dist, no symlinks)
 COPY --from=builder /deploy ./
 
+RUN npm install -g @mariozechner/pi-coding-agent
+
+# Install agent-slack CLI so the agent can query Slack from inside the sandbox.
+# The CLI reads SLACK_TOKEN from the environment (injected via .env by the orchestrator).
+RUN npm install -g agent-slack
+
+# Copy extension manifest and install script before switching to sandbox user
+COPY packages/agents/extensions.json /tmp/extensions.json
+COPY infra/openshell/scripts/install-extensions.mjs /tmp/install-extensions.mjs
+
+# Copy pi config (mirrors ~/.pi/ structure) — owned by sandbox
+COPY packages/agents/src/pi/.config/ /home/sandbox/.pi/
+RUN chown -R sandbox:sandbox /home/sandbox/.pi/
+
 # Copy sandbox policies (immutable, root-owned)
 COPY infra/openshell/policies/ ./policies/
 RUN chown root:root -R ./policies/ && chmod 444 -R ./policies/
+
+# Copy skill documentation files (immutable, root-owned).
+# The agent reads these on demand to learn how to use CLI tools.
+COPY infra/openshell/skills/ ./skills/
+RUN chown root:root -R ./skills/ && chmod 444 -R ./skills/
 
 # Create workspace directory (writable, sandbox-owned)
 # This is where the user's files, code, and agent data live.
@@ -107,6 +130,11 @@ RUN mkdir -p /workspace/.knowledge-base /tmp/agent /sandbox && \
 # Placing it at the filesystem root (/) would be blocked by Landlock.
 COPY infra/openshell/scripts/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+
+# Pre-install pi extensions from manifest so they are available at runtime
+# Must run as root before USER sandbox because `pi install` calls `npm install -g`
+# which writes to the root-owned /usr/local/lib/node_modules/ directory.
+RUN node /tmp/install-extensions.mjs /tmp/extensions.json
 
 # Switch to sandbox user for runtime
 USER sandbox

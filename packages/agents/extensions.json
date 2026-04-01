@@ -1,0 +1,9 @@
+[
+	"npm:pi-web-access",
+	"npm:pi-subagents",
+	"npm:@aliou/pi-guardrails",
+	"npm:pi-memory",
+	"npm:pi-extension-observational-memory",
+	"npm:pi-interactive-shell",
+	"npm:@plannotator/pi-extension"
+]

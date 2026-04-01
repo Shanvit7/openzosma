@@ -1,16 +1,15 @@
 import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
-import { mkdirSync, symlinkSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
 import type { AgentProvider, AgentSession } from "@openzosma/agents"
 import { PiAgentProvider } from "@openzosma/agents"
 import type { Pool } from "@openzosma/db"
-import { agentConfigQueries } from "@openzosma/db"
+import { agentConfigQueries, integrationQueries } from "@openzosma/db"
 import { createLogger } from "@openzosma/logger"
 import type { KBFileEntry, OrchestratorSessionManager } from "@openzosma/orchestrator"
-import { ArtifactManager } from "./artifact-manager.js"
-import { createSnapshot, detectChanges } from "./file-scanner.js"
-import type { FileArtifact, GatewayEvent, Session, SessionMessage } from "./types.js"
+import { applySlashCommand } from "./command-parser.js"
+import type { FileArtifact, GatewayEvent, Session, SessionMessage, WsAttachment } from "./types.js"
 
 const log = createLogger({ component: "gateway" })
 
@@ -30,12 +29,13 @@ interface SessionState {
  *
  * Operates in two modes:
  *
- * 1. **Local mode** (default): Runs pi-agent directly in-process. This is the
- *    pre-Phase-4 behavior and serves as the development fallback.
+ * 1. **Local mode** (default/deprecated): Runs pi-agent directly in-process.
+ *    No file management features. Serves as development fallback only.
  *
  * 2. **Orchestrator mode**: Delegates session lifecycle and message routing
  *    to the OrchestratorSessionManager, which proxies to sandbox-server
- *    instances running inside per-user OpenShell sandboxes.
+ *    instances running inside per-user OpenShell sandboxes. File management
+ *    is handled entirely in the sandbox via the user-files API.
  *
  * The mode is determined by whether an `orchestrator` is passed to the
  * constructor. When the orchestrator is present, all operations that involve
@@ -48,7 +48,6 @@ export class SessionManager {
 	private provider: AgentProvider
 	private pool: Pool | undefined
 	private orchestrator: OrchestratorSessionManager | undefined
-	readonly artifactManager: ArtifactManager
 	/**
 	 * Mutex that serializes the critical section between setting PI_MEMORY_DIR
 	 * (process.env) and the jiti extension import that reads it. Without this,
@@ -56,12 +55,14 @@ export class SessionManager {
 	 */
 	private initLock: Promise<void> = Promise.resolve()
 
-	constructor(opts?: { provider?: AgentProvider; pool?: Pool; orchestrator?: OrchestratorSessionManager }) {
+	constructor(opts?: {
+		provider?: AgentProvider
+		pool?: Pool
+		orchestrator?: OrchestratorSessionManager
+	}) {
 		this.provider = opts?.provider ?? new PiAgentProvider()
 		this.pool = opts?.pool
 		this.orchestrator = opts?.orchestrator
-		const workspaceRoot = resolve(process.env.OPENZOSMA_WORKSPACE ?? join(process.cwd(), "workspace"))
-		this.artifactManager = new ArtifactManager(workspaceRoot)
 	}
 
 	private getEmitter(sessionId: string): EventEmitter {
@@ -84,7 +85,13 @@ export class SessionManager {
 	async createSession(
 		id?: string,
 		agentConfigId?: string,
-		resolvedConfig?: { provider?: string; model?: string; systemPrompt?: string | null; toolsEnabled?: string[] },
+		resolvedConfig?: {
+			provider?: string
+			model?: string
+			systemPrompt?: string | null
+			systemPromptPrefix?: string
+			toolsEnabled?: string[]
+		},
 		userId?: string,
 	): Promise<Session> {
 		// If the caller supplies an ID that already exists, return the existing session.
@@ -134,7 +141,7 @@ export class SessionManager {
 			return session
 		}
 
-		// -- Local mode --
+		// -- Local mode (deprecated) --
 		const session: Session = {
 			id: sessionId,
 			agentConfigId,
@@ -182,11 +189,42 @@ export class SessionManager {
 		})
 		await prevLock
 
+		// Build integration context when a DB pool is available.
+		let systemPromptSuffix: string | undefined
+		if (this.pool) {
+			try {
+				const integrations = await integrationQueries.listIntegrations(this.pool)
+				if (integrations.length > 0) {
+					const lines = [
+						"## Available database integrations",
+						"",
+						"The following database integrations are configured and can be queried on behalf of the user.",
+						"",
+						...integrations.map((i) => `- ${i.name} (${i.type}) — id: ${i.id}`),
+						"",
+						"Rules for database queries:",
+						"1. ALWAYS call list_database_schemas first before writing any SQL query.",
+						"   Never assume table or column names — they vary per integration.",
+						"2. Use only tables and columns returned by list_database_schemas.",
+						"3. Reason about the schema to satisfy the user's intent. The user will use natural",
+						"   language — map it to the actual tables and columns available. Do not require",
+						"   an exact name match before attempting a query.",
+						"4. If the schema genuinely has nothing relevant, say so clearly.",
+					]
+					systemPromptSuffix = lines.join("\n")
+				}
+			} catch (err) {
+				log.warn("Failed to load integrations for session context", { error: (err as Error).message })
+			}
+		}
+
 		const agentSession = this.provider.createSession({
 			sessionId: session.id,
 			workspaceDir: sessionDir,
 			memoryDir,
 			...agentConfig,
+			dbPool: this.pool ?? undefined,
+			systemPromptSuffix,
 		})
 
 		// Release the lock after a short delay to let the extension loader read
@@ -212,7 +250,6 @@ export class SessionManager {
 			}
 		}
 		this.emitters.delete(id)
-		this.artifactManager.deleteArtifacts(id)
 		return this.sessions.delete(id)
 	}
 
@@ -232,16 +269,11 @@ export class SessionManager {
 		}
 
 		// Remove local gateway session state for this user
-		for (const [id, state] of this.sessions) {
-			if (state.session.messages.length >= 0) {
-				// We don't have userId on SessionState, so we clear all sessions
-				// that the orchestrator also tracks for this user.
-				const orchSession = this.orchestrator.getSession(id)
-				if (orchSession && orchSession.userId === userId) {
-					this.emitters.delete(id)
-					this.artifactManager.deleteArtifacts(id)
-					this.sessions.delete(id)
-				}
+		for (const [id] of this.sessions) {
+			const orchSession = this.orchestrator.getSession(id)
+			if (orchSession && orchSession.userId === userId) {
+				this.emitters.delete(id)
+				this.sessions.delete(id)
 			}
 		}
 
@@ -357,17 +389,24 @@ export class SessionManager {
 	 * Send a user message and stream back gateway events.
 	 *
 	 * In orchestrator mode, delegates to the sandbox-server via the
-	 * OrchestratorSessionManager. In local mode, runs pi-agent in-process.
-	 * After each tool call ends, the workspace is scanned for new output files
-	 * which are promoted to the artifacts directory and emitted as `file_output` events.
+	 * OrchestratorSessionManager. File artifacts generated by the agent
+	 * are automatically copied to /workspace/user-files/ai-generated/<sessionId>/
+	 * inside the sandbox (by the sandbox-server's file scanner). The gateway
+	 * strips base64 content from file_output events and forwards metadata only.
+	 *
+	 * When attachments are provided, files are uploaded to the sandbox and the
+	 * message content is prepended with file path references so the agent
+	 * knows about them.
 	 *
 	 * @param userId Required in orchestrator mode; ignored in local mode.
+	 * @param attachments Optional file attachments from the chat input.
 	 */
 	async *sendMessage(
 		sessionId: string,
 		content: string,
 		signal?: AbortSignal,
 		userId?: string,
+		attachments?: WsAttachment[],
 	): AsyncGenerator<GatewayEvent> {
 		// -- Orchestrator mode --
 		if (this.orchestrator) {
@@ -402,23 +441,92 @@ export class SessionManager {
 			}
 			state.session.messages.push(userMsg)
 
+			// Apply slash command mode instructions, then prepend file references
+			let augmentedContent = applySlashCommand(content)
+			if (attachments && attachments.length > 0) {
+				try {
+					const filesToUpload = attachments.map((att) => {
+						const { buffer } = this.decodeDataUrl(att.dataUrl)
+						return {
+							filename: att.filename,
+							content: buffer.toString("base64"),
+							dir: "user-files/uploads",
+						}
+					})
+					const uploaded = await this.orchestrator.uploadFiles(userId, filesToUpload)
+					if (uploaded.length > 0) {
+						const fileRefs = uploaded.map((u) => `- ${u.path}`).join("\n")
+						augmentedContent = `The user has attached the following files to this message (available in the workspace):\n${fileRefs}\n\n${content}`
+					}
+				} catch (err) {
+					log.warn("Failed to upload attachments to sandbox", {
+						error: err instanceof Error ? err.message : String(err),
+					})
+				}
+			}
+
 			let lastAssistantText = ""
 			let lastMessageId: string | undefined
 			const emitter = this.getEmitter(sessionId)
 
-			for await (const event of this.orchestrator.sendMessage(sessionId, userId, content, signal)) {
-				const gatewayEvent: GatewayEvent = event as GatewayEvent
+			const streamStartTime = Date.now()
+			let eventCount = 0
+			log.info("Orchestrator stream started", { sessionId, userId, contentLength: augmentedContent.length })
 
-				if (event.type === "message_start") {
-					lastMessageId = event.id
-					lastAssistantText = ""
-				} else if (event.type === "message_update" && event.text) {
-					lastAssistantText += event.text
+			try {
+				for await (const event of this.orchestrator.sendMessage(sessionId, userId, augmentedContent, signal)) {
+					const gatewayEvent: GatewayEvent = event as GatewayEvent
+					eventCount++
+
+					if (event.type === "message_start") {
+						lastMessageId = event.id
+						lastAssistantText = ""
+					} else if (event.type === "message_update" && event.text) {
+						lastAssistantText += event.text
+					}
+
+					// Intercept file_output events from sandbox: strip base64 content
+					// and forward metadata only. The artifacts are already stored in
+					// the sandbox filesystem under user-files/ai-generated/<sessionId>/.
+					if (gatewayEvent.type === "file_output" && gatewayEvent.artifacts) {
+						const cleanArtifacts: FileArtifact[] = gatewayEvent.artifacts.map((a) => ({
+							filename: a.filename,
+							mediatype: a.mediatype,
+							sizebytes: a.sizebytes,
+						}))
+						const cleanEvent: GatewayEvent = {
+							type: "file_output",
+							artifacts: cleanArtifacts,
+						}
+						emitter.emit("event", cleanEvent)
+						yield cleanEvent
+						continue
+					}
+
+					emitter.emit("event", gatewayEvent)
+					yield gatewayEvent
 				}
-
-				emitter.emit("event", gatewayEvent)
-				yield gatewayEvent
+			} catch (err) {
+				// If the caller aborted (e.g. Slack adapter timeout), exit silently.
+				// The caller already knows the signal fired and will handle it.
+				if (signal?.aborted) {
+					log.debug("Orchestrator stream aborted by caller signal", { sessionId, eventCount })
+				} else {
+					const message = err instanceof Error ? err.message : "Unexpected error during agent stream"
+					log.error("Orchestrator stream threw", { sessionId, error: message, eventCount })
+					const errorEvent: GatewayEvent = { type: "error", error: message }
+					emitter.emit("event", errorEvent)
+					yield errorEvent
+				}
 			}
+
+			const streamDurationMs = Date.now() - streamStartTime
+			log.info("Orchestrator stream completed", {
+				sessionId,
+				eventCount,
+				responseLength: lastAssistantText.length,
+				durationMs: streamDurationMs,
+			})
 
 			if (lastAssistantText) {
 				const assistantMsg: SessionMessage = {
@@ -433,7 +541,7 @@ export class SessionManager {
 			return
 		}
 
-		// -- Local mode --
+		// -- Local mode (deprecated) --
 		// Auto-create session on first message if it doesn't exist yet.
 		if (!this.sessions.has(sessionId)) {
 			await this.createSession(sessionId)
@@ -460,14 +568,18 @@ export class SessionManager {
 		}
 		session.messages.push(userMsg)
 
+		// Apply slash command mode instructions, then prepend file references (local mode)
+		const slashContent = applySlashCommand(content)
+		const augmentedContent =
+			attachments && attachments.length > 0
+				? this.writeAttachmentsToDir(attachments, workspaceDir, slashContent)
+				: slashContent
+
 		let lastAssistantText = ""
 		let lastMessageId: string | undefined
 		const emitter = this.getEmitter(sessionId)
 
-		// Take initial workspace snapshot for artifact detection
-		let snapshot = createSnapshot(workspaceDir)
-
-		for await (const event of agentSession.sendMessage(content, signal)) {
+		for await (const event of agentSession.sendMessage(augmentedContent, signal)) {
 			const gatewayEvent: GatewayEvent = event as GatewayEvent
 
 			if (event.type === "message_start") {
@@ -479,31 +591,6 @@ export class SessionManager {
 
 			emitter.emit("event", gatewayEvent)
 			yield gatewayEvent
-
-			// After a tool call ends, scan for new output files
-			if (event.type === "tool_call_end") {
-				const artifacts = await this.scanAndPromoteArtifacts(sessionId, workspaceDir, snapshot)
-				if (artifacts) {
-					snapshot = artifacts.newSnapshot
-					const fileEvent: GatewayEvent = {
-						type: "file_output",
-						artifacts: artifacts.promoted,
-					}
-					emitter.emit("event", fileEvent)
-					yield fileEvent
-				}
-			}
-		}
-
-		// Final scan after the turn completes to catch any stragglers
-		const finalArtifacts = await this.scanAndPromoteArtifacts(sessionId, workspaceDir, snapshot)
-		if (finalArtifacts) {
-			const fileEvent: GatewayEvent = {
-				type: "file_output",
-				artifacts: finalArtifacts.promoted,
-			}
-			emitter.emit("event", fileEvent)
-			yield fileEvent
 		}
 
 		// Store assistant message for session history
@@ -519,30 +606,85 @@ export class SessionManager {
 	}
 
 	/**
-	 * Scans the workspace for changed files and promotes any new output
-	 * files to the artifacts directory.
+	 * Decode a data URL into a Buffer and MIME type.
 	 *
-	 * Returns null if no new artifacts were found.
+	 * Accepts both `data:<mime>;base64,<data>` and raw base64 strings.
 	 */
-	private async scanAndPromoteArtifacts(
-		sessionId: string,
-		workspaceDir: string,
-		previousSnapshot: Map<string, { relativePath: string; mtimeMs: number; sizebytes: number }>,
-	): Promise<{ newSnapshot: typeof previousSnapshot; promoted: FileArtifact[] } | null> {
-		const { newSnapshot, changedFiles } = detectChanges(workspaceDir, previousSnapshot)
-
-		if (changedFiles.length === 0) return null
-
-		const promoted = await this.artifactManager.promoteFiles(sessionId, changedFiles)
-		if (promoted.length === 0) return null
-
-		return {
-			newSnapshot,
-			promoted: promoted.map((a) => ({
-				filename: a.filename,
-				mediatype: a.mediatype,
-				sizebytes: a.sizebytes,
-			})),
+	private decodeDataUrl(dataUrl: string): { buffer: Buffer; mimeType: string } {
+		const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
+		if (match) {
+			return { buffer: Buffer.from(match[2], "base64"), mimeType: match[1] }
 		}
+		// Fallback: assume raw base64
+		return { buffer: Buffer.from(dataUrl, "base64"), mimeType: "application/octet-stream" }
+	}
+
+	/**
+	 * Write attachment files to a directory and return the content string
+	 * prepended with file path references.
+	 *
+	 * Files are placed at `<targetDir>/user-uploads/<filename>`. Duplicate
+	 * filenames are disambiguated with a numeric suffix.
+	 *
+	 * Used only in local mode (deprecated).
+	 *
+	 * @returns The augmented content string with file references prepended.
+	 */
+	private writeAttachmentsToDir(attachments: WsAttachment[], targetDir: string, content: string): string {
+		if (attachments.length === 0) return content
+
+		const uploadsDir = join(targetDir, "user-uploads")
+		mkdirSync(uploadsDir, { recursive: true })
+
+		const writtenPaths: string[] = []
+		const usedNames = new Set<string>()
+
+		for (const attachment of attachments) {
+			try {
+				const { buffer } = this.decodeDataUrl(attachment.dataUrl)
+
+				// Disambiguate duplicate filenames
+				let filename = attachment.filename
+				if (usedNames.has(filename)) {
+					const ext = filename.includes(".") ? `.${filename.split(".").pop()}` : ""
+					const base = ext ? filename.slice(0, -ext.length) : filename
+					let counter = 1
+					while (usedNames.has(`${base}-${counter}${ext}`)) counter++
+					filename = `${base}-${counter}${ext}`
+				}
+				usedNames.add(filename)
+
+				const filePath = join(uploadsDir, filename)
+				mkdirSync(dirname(filePath), { recursive: true })
+				writeFileSync(filePath, buffer)
+				writtenPaths.push(`user-uploads/${filename}`)
+			} catch (err) {
+				log.warn(`Failed to write attachment ${attachment.filename}`, {
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+
+		if (writtenPaths.length === 0) return content
+
+		const fileRefs = writtenPaths.map((p) => `- ${p}`).join("\n")
+		const prefix = `The user has attached the following files to this message (available in the workspace):\n${fileRefs}\n\n`
+		return prefix + content
+	}
+
+	/**
+	 * Look up an OpenZosma user ID by email address.
+	 *
+	 * Used by channel adapters (Slack, WhatsApp) to map external platform
+	 * users to internal accounts. The users table lives in the `auth` schema
+	 * (managed by Better Auth).
+	 *
+	 * @returns The user ID if found, or null if no matching account exists.
+	 */
+	async resolveUserByEmail(email: string): Promise<string | null> {
+		if (!this.pool) return null
+
+		const result = await this.pool.query<{ id: string }>("SELECT id FROM auth.users WHERE email = $1 LIMIT 1", [email])
+		return result.rows[0]?.id ?? null
 	}
 }

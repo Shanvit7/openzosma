@@ -13,6 +13,11 @@ export type AgentStreamEventType =
 	| "tool_call_end"
 	// Thinking / reasoning
 	| "thinking_update"
+	// Auto-recovery (retry / compaction)
+	| "auto_retry_start"
+	| "auto_retry_end"
+	| "auto_compaction_start"
+	| "auto_compaction_end"
 	// Error
 	| "error"
 
@@ -35,6 +40,14 @@ export interface AgentStreamEvent {
 	toolResult?: string
 	/** Whether the tool execution errored (for tool_call_end). */
 	isToolError?: boolean
+	/** Retry attempt number (for auto_retry_start/end). */
+	attempt?: number
+	/** Max retry attempts (for auto_retry_start). */
+	maxAttempts?: number
+	/** Delay in ms before retry (for auto_retry_start). */
+	delayMs?: number
+	/** Whether the retry succeeded (for auto_retry_end). */
+	success?: boolean
 }
 
 /** A stored message within an agent session. */
@@ -77,11 +90,29 @@ export interface AgentSessionOpts {
 	 */
 	systemPrompt?: string
 	/**
+	 * Text to prepend to the system prompt. When set, this is placed before
+	 * the main system prompt (either the default or `systemPrompt` override).
+	 * Used by channel adapters (e.g. Slack) to inject adapter-specific
+	 * instructions without replacing the full prompt.
+	 */
+	systemPromptPrefix?: string
+	/**
 	 * Subset of tool names to enable (e.g. ["read", "bash", "write"]).
 	 * Valid names: read, bash, edit, write, grep, find, ls.
 	 * When omitted or empty, all tools are enabled.
 	 */
 	toolsEnabled?: string[]
+	/**
+	 * PostgreSQL pool for the OpenZosma platform DB. When provided, the agent
+	 * session includes query_database and list_database_schemas tools backed by
+	 * the saved integrations in that pool.
+	 */
+	dbPool?: import("pg").Pool
+	/**
+	 * Optional text appended to the system prompt (after a blank line).
+	 * Use to inject session-specific context such as available integrations.
+	 */
+	systemPromptSuffix?: string
 }
 
 /** A single agent session that can exchange messages. */

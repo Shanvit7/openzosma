@@ -56,14 +56,6 @@ describe("bootstrapMemory", () => {
 		process.env.PI_MEMORY_DIR = undefined
 	})
 
-	it("returns paths for installed extensions", () => {
-		const result = bootstrapMemory({ workspaceDir: "/home/agent" })
-		// Both packages are installed as deps, so both should resolve
-		expect(result.paths.length).toBe(2)
-		expect(result.paths[0]).toContain("pi-memory")
-		expect(result.paths[1]).toContain("pi-extension-observational-memory")
-	})
-
 	it("sets memoryDir in result", () => {
 		const result = bootstrapMemory({ workspaceDir: "/home/agent" })
 		expect(result.memoryDir).toBe("/home/agent/.pi/agent/memory")
@@ -72,12 +64,5 @@ describe("bootstrapMemory", () => {
 	it("sets PI_MEMORY_DIR env var", () => {
 		bootstrapMemory({ workspaceDir: "/home/agent" })
 		expect(process.env.PI_MEMORY_DIR).toBe("/home/agent/.pi/agent/memory")
-	})
-
-	it("pi-memory is listed before observational-memory", () => {
-		const result = bootstrapMemory({ workspaceDir: "/home/agent" })
-		const piMemIdx = result.paths.findIndex((p) => p.includes("pi-memory") && !p.includes("observational"))
-		const obsIdx = result.paths.findIndex((p) => p.includes("observational"))
-		expect(piMemIdx).toBeLessThan(obsIdx)
 	})
 })
