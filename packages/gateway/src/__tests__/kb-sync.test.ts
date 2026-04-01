@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
-import { createTestApp, type StubSessionManager } from "./helpers.js"
 import type { Hono } from "hono"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { type Json, type StubSessionManager, createTestApp } from "./helpers.js"
 
 vi.mock("@openzosma/auth", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@openzosma/auth")>()
@@ -13,9 +13,6 @@ vi.mock("@openzosma/auth", async (importOriginal) => {
 vi.mock("@openzosma/a2a", () => ({
 	buildDefaultAgentCard: vi.fn().mockResolvedValue(null),
 }))
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Any = any
 
 describe("KB sync routes", () => {
 	let app: Hono
@@ -105,13 +102,11 @@ describe("KB sync routes", () => {
 
 	describe("GET /api/v1/kb/pull", () => {
 		it("pulls KB files", async () => {
-			sm.kbFiles = [
-				{ path: "notes.md", content: "# Notes", sizeBytes: 7, modifiedAt: "2026-01-01T00:00:00Z" },
-			]
+			sm.kbFiles = [{ path: "notes.md", content: "# Notes", sizeBytes: 7, modifiedAt: "2026-01-01T00:00:00Z" }]
 
 			const res = await app.request("/api/v1/kb/pull")
 			expect(res.status).toBe(200)
-			const body = (await res.json()) as Any
+			const body = (await res.json()) as Json
 			expect(body.files).toHaveLength(1)
 			expect(body.files[0].path).toBe("notes.md")
 		})

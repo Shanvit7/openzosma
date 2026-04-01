@@ -1,9 +1,13 @@
-import type { Hono } from "hono"
-import { vi } from "vitest"
-import type { Session, GatewayEvent } from "../types.js"
-import type { SessionManager } from "../session-manager.js"
 import type { Auth } from "@openzosma/auth"
 import type { Pool } from "@openzosma/db"
+import type { Hono } from "hono"
+import { vi } from "vitest"
+import type { SessionManager } from "../session-manager.js"
+import type { GatewayEvent, Session } from "../types.js"
+
+/** Recursive JSON type for test assertion casts. Avoids `any` while allowing nested access. */
+// biome-ignore lint/suspicious/noExplicitAny: needed for flexible test JSON assertions
+export type Json = Record<string, any>
 
 /**
  * Minimal stub that satisfies the SessionManager interface used by createApp().
@@ -99,11 +103,7 @@ export function createMockAuth(opts?: {
 
 	return {
 		api: {
-			getSession: vi.fn().mockResolvedValue(
-				authenticated
-					? { user: { id: userId, role } }
-					: null,
-			),
+			getSession: vi.fn().mockResolvedValue(authenticated ? { user: { id: userId, role } } : null),
 		},
 		handler: vi.fn().mockImplementation(() => new Response("ok")),
 	} as unknown as Auth
@@ -134,11 +134,7 @@ export async function createTestApp(opts?: {
 		authenticated: opts?.authenticated ?? true,
 	})
 
-	const app = createApp(
-		sessionManager as unknown as SessionManager,
-		pool,
-		auth,
-	)
+	const app = createApp(sessionManager as unknown as SessionManager, pool, auth)
 
 	return { app: app as unknown as Hono, sessionManager, pool, auth }
 }

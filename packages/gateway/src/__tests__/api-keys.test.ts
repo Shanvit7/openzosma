@@ -1,7 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
-import { createTestApp } from "./helpers.js"
-import type { Hono } from "hono"
 import { apiKeyQueries } from "@openzosma/db"
+import type { Hono } from "hono"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { type Json, createTestApp } from "./helpers.js"
 
 vi.mock("@openzosma/auth", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@openzosma/auth")>()
@@ -14,9 +14,6 @@ vi.mock("@openzosma/auth", async (importOriginal) => {
 vi.mock("@openzosma/a2a", () => ({
 	buildDefaultAgentCard: vi.fn().mockResolvedValue(null),
 }))
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Any = any
 
 describe("API key routes", () => {
 	let app: Hono
@@ -45,7 +42,7 @@ describe("API key routes", () => {
 				body: JSON.stringify({ name: "test-key" }),
 			})
 			expect(res.status).toBe(201)
-			const body = (await res.json()) as Any
+			const body = (await res.json()) as Json
 			expect(body).toHaveProperty("id")
 			expect(body).toHaveProperty("key")
 			expect(body.key).toMatch(/^ozk_/)
@@ -78,7 +75,7 @@ describe("API key routes", () => {
 
 			const res = await app.request("/api/v1/api-keys")
 			expect(res.status).toBe(200)
-			const body = (await res.json()) as Any
+			const body = (await res.json()) as Json
 			expect(body.keys).toHaveLength(1)
 			expect(body.keys[0].keyPrefix).toBe("ozk_abc")
 		})

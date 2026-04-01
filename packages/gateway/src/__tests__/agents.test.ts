@@ -1,7 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
-import { createTestApp } from "./helpers.js"
-import type { Hono } from "hono"
 import { agentConfigQueries } from "@openzosma/db"
+import type { Hono } from "hono"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { type Json, createTestApp } from "./helpers.js"
 
 vi.mock("@openzosma/auth", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@openzosma/auth")>()
@@ -14,9 +14,6 @@ vi.mock("@openzosma/auth", async (importOriginal) => {
 vi.mock("@openzosma/a2a", () => ({
 	buildDefaultAgentCard: vi.fn().mockResolvedValue(null),
 }))
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Any = any
 
 describe("Agent config routes", () => {
 	let app: Hono
@@ -48,7 +45,7 @@ describe("Agent config routes", () => {
 
 			const res = await app.request("/api/v1/agents")
 			expect(res.status).toBe(200)
-			const body = (await res.json()) as Any
+			const body = (await res.json()) as Json
 			expect(body.agents).toHaveLength(1)
 			expect(body.agents[0].name).toBe("Test Agent")
 		})
@@ -74,7 +71,7 @@ describe("Agent config routes", () => {
 
 			const res = await app.request("/api/v1/agents/agent-1")
 			expect(res.status).toBe(200)
-			const body = (await res.json()) as Any
+			const body = (await res.json()) as Json
 			expect(body.id).toBe("agent-1")
 			expect(body.name).toBe("Test Agent")
 		})

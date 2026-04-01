@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
-import { createTestApp, createMockAuth, createMockPool, StubSessionManager } from "./helpers.js"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { SessionManager } from "../session-manager.js"
+import { type Json, StubSessionManager, createMockAuth, createMockPool, createTestApp } from "./helpers.js"
 
 const mockValidateApiKey = vi.fn()
 
@@ -16,9 +16,6 @@ vi.mock("@openzosma/a2a", () => ({
 	buildDefaultAgentCard: vi.fn().mockResolvedValue(null),
 }))
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Any = any
-
 describe("Auth middleware", () => {
 	beforeEach(() => {
 		mockValidateApiKey.mockReset()
@@ -30,7 +27,7 @@ describe("Auth middleware", () => {
 
 		const res = await app.request("/api/v1/sessions/test-id")
 		expect(res.status).toBe(401)
-		const body = (await res.json()) as Any
+		const body = (await res.json()) as Json
 		expect(body.error.code).toBe("AUTH_REQUIRED")
 	})
 
@@ -59,7 +56,7 @@ describe("Auth middleware", () => {
 			headers: { Authorization: "Bearer ozk_invalid" },
 		})
 		expect(res.status).toBe(401)
-		const body = (await res.json()) as Any
+		const body = (await res.json()) as Json
 		expect(body.error.code).toBe("INVALID_API_KEY")
 	})
 
@@ -85,7 +82,7 @@ describe("Auth middleware", () => {
 			headers: { Authorization: "Bearer ozk_limited" },
 		})
 		expect(res.status).toBe(403)
-		const body = (await res.json()) as Any
+		const body = (await res.json()) as Json
 		expect(body.error.code).toBe("FORBIDDEN")
 	})
 
@@ -114,7 +111,7 @@ describe("Auth middleware", () => {
 			body: JSON.stringify({ name: "test-key" }),
 		})
 		expect(res.status).toBe(403)
-		const body = (await res.json()) as Any
+		const body = (await res.json()) as Json
 		expect(body.error.code).toBe("FORBIDDEN")
 	})
 

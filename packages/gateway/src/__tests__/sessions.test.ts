@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
-import { createTestApp, type StubSessionManager } from "./helpers.js"
 import type { Hono } from "hono"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { type Json, type StubSessionManager, createTestApp } from "./helpers.js"
 
 vi.mock("@openzosma/auth", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@openzosma/auth")>()
@@ -13,9 +13,6 @@ vi.mock("@openzosma/auth", async (importOriginal) => {
 vi.mock("@openzosma/a2a", () => ({
 	buildDefaultAgentCard: vi.fn().mockResolvedValue(null),
 }))
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Any = any
 
 describe("Session routes", () => {
 	let app: Hono
@@ -31,7 +28,7 @@ describe("Session routes", () => {
 		it("creates a session", async () => {
 			const res = await app.request("/api/v1/sessions", { method: "POST" })
 			expect(res.status).toBe(201)
-			const body = (await res.json()) as Any
+			const body = (await res.json()) as Json
 			expect(body).toHaveProperty("id")
 			expect(body).toHaveProperty("createdAt")
 		})
@@ -42,7 +39,7 @@ describe("Session routes", () => {
 			await sm.createSession("test-s1")
 			const res = await app.request("/api/v1/sessions/test-s1")
 			expect(res.status).toBe(200)
-			const body = (await res.json()) as Any
+			const body = (await res.json()) as Json
 			expect(body.id).toBe("test-s1")
 			expect(body).toHaveProperty("messageCount")
 		})
@@ -79,7 +76,7 @@ describe("Session routes", () => {
 				body: JSON.stringify({ content: "Hello" }),
 			})
 			expect(res.status).toBe(200)
-			const body = (await res.json()) as Any
+			const body = (await res.json()) as Json
 			expect(body.role).toBe("assistant")
 			expect(body.content).toBe("Hi there!")
 		})
@@ -116,7 +113,7 @@ describe("Session routes", () => {
 
 			const res = await app.request("/api/v1/sessions/list-1/messages")
 			expect(res.status).toBe(200)
-			const body = (await res.json()) as Any[]
+			const body = (await res.json()) as Json[]
 			expect(body).toHaveLength(1)
 			expect(body[0].content).toBe("Hello")
 		})
