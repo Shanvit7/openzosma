@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
+import { createReadStream, existsSync, mkdirSync, readdirSync, statSync } from "node:fs"
+import { join, resolve } from "node:path"
 import { buildDefaultAgentCard } from "@openzosma/a2a"
 import type { Auth } from "@openzosma/auth"
 import type { Role } from "@openzosma/auth"
@@ -79,9 +81,172 @@ export const createApp = (
 	// File management routes (require orchestrator for sandbox filesystem access)
 	// -----------------------------------------------------------------------
 
+	// MIME types for agent-generated artifacts (used in local-mode file routes
+	// and the session artifact routes below).
+	const ARTIFACT_MIME_MAP: Record<string, string> = {
+		png: "image/png",
+		svg: "image/svg+xml",
+		pdf: "application/pdf",
+		pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		csv: "text/csv",
+		xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		txt: "text/plain",
+		json: "application/json",
+	}
+
 	if (orchestrator) {
 		app.route("/api/v1/files", createFileRoutes({ orchestrator }))
+	} else {
+		// Local mode: serve files from workspace/user-files/ai-generated/.
+		// Files are copied here by scanOutputDir whenever the agent generates an artifact.
+
+		const localUserFilesDir = (): string => {
+			const root = resolve(process.env.OPENZOSMA_WORKSPACE ?? join(process.cwd(), "workspace"))
+			const dir = join(root, "user-files", "ai-generated")
+			mkdirSync(dir, { recursive: true })
+			return dir
+		}
+
+		const LOCAL_MIME_MAP: Record<string, string> = {
+			png: "image/png",
+			svg: "image/svg+xml",
+			pdf: "application/pdf",
+			pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			csv: "text/csv",
+			xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			txt: "text/plain",
+			json: "application/json",
+		}
+
+		const scanLocalFiles = (dir: string) =>
+			existsSync(dir)
+				? readdirSync(dir)
+						.filter((f) => LOCAL_MIME_MAP[f.split(".").pop() ?? ""])
+						.map((filename) => {
+							const ext = filename.split(".").pop() ?? ""
+							return {
+								name: filename,
+								path: `/ai-generated/${filename}`,
+								isFolder: false,
+								mimeType: LOCAL_MIME_MAP[ext] ?? "application/octet-stream",
+								sizeBytes: statSync(join(dir, filename)).size,
+								modifiedAt: statSync(join(dir, filename)).mtime.toISOString(),
+							}
+						})
+				: []
+
+		app.get("/api/v1/files/tree", requirePermission("files", "read"), (c) => {
+			const dir = localUserFilesDir()
+			const files = scanLocalFiles(dir)
+			const entries =
+				files.length > 0
+					? [
+							{
+								name: "ai-generated",
+								path: "/ai-generated",
+								isFolder: true,
+								mimeType: null,
+								sizeBytes: 0,
+								modifiedAt: new Date().toISOString(),
+								children: files,
+							},
+						]
+					: []
+			return c.json({ entries })
+		})
+
+		app.get("/api/v1/files/list", requirePermission("files", "read"), (c) => {
+			const dir = localUserFilesDir()
+			return c.json({ entries: scanLocalFiles(dir) })
+		})
+
+		app.get("/api/v1/files/download", requirePermission("files", "read"), (c) => {
+			const filePath = c.req.query("path")
+			if (!filePath) return c.json({ error: "path query parameter is required" }, 400)
+
+			const dir = localUserFilesDir()
+			// path is like /ai-generated/filename.pdf — strip the folder prefix
+			const filename = filePath.replace(/^\/ai-generated\//, "")
+			const fullPath = join(dir, filename)
+
+			if (!existsSync(fullPath)) return c.json({ error: "File not found" }, 404)
+
+			const ext = filename.split(".").pop() ?? ""
+			const contentType = LOCAL_MIME_MAP[ext] ?? "application/octet-stream"
+			const stat = statSync(fullPath)
+			const download = c.req.query("download") === "true"
+
+			c.header("Content-Type", contentType)
+			c.header("Content-Length", String(stat.size))
+			c.header("Cache-Control", "private, max-age=3600")
+			if (download) c.header("Content-Disposition", `attachment; filename="${filename}"`)
+
+			const stream = createReadStream(fullPath)
+			return c.body(stream as unknown as ReadableStream)
+		})
 	}
+
+	// -----------------------------------------------------------------------
+	// Session artifact routes (local mode — serve files from session output dir)
+	// -----------------------------------------------------------------------
+
+	app.get("/api/v1/sessions/:id/artifacts/:filename", requirePermission("sessions", "read"), (c) => {
+		const sessionId = c.req.param("id")
+		const filename = c.req.param("filename")
+
+		const workspaceDir = sessionManager.getSessionWorkspaceDir(sessionId)
+		if (!workspaceDir) {
+			return c.json({ error: "Session not found or not in local mode" }, 404)
+		}
+
+		const filePath = join(workspaceDir, "output", filename)
+		if (!existsSync(filePath)) {
+			return c.json({ error: "Artifact not found" }, 404)
+		}
+
+		const stat = statSync(filePath)
+		const ext = filename.split(".").pop() ?? ""
+		const contentType = ARTIFACT_MIME_MAP[ext] ?? "application/octet-stream"
+		const download = c.req.query("download") === "true"
+
+		c.header("Content-Type", contentType)
+		c.header("Content-Length", String(stat.size))
+		c.header("Cache-Control", "private, max-age=3600")
+		if (download) {
+			c.header("Content-Disposition", `attachment; filename="${filename}"`)
+		}
+
+		// Stream the file to avoid loading it fully into memory
+		const stream = createReadStream(filePath)
+		return c.body(stream as unknown as ReadableStream)
+	})
+
+	app.get("/api/v1/sessions/:id/artifacts", requirePermission("sessions", "read"), (c) => {
+		const sessionId = c.req.param("id")
+		const workspaceDir = sessionManager.getSessionWorkspaceDir(sessionId)
+		if (!workspaceDir) {
+			return c.json({ artifacts: [] })
+		}
+
+		const outputDir = join(workspaceDir, "output")
+		if (!existsSync(outputDir)) {
+			return c.json({ artifacts: [] })
+		}
+
+		const TRACKED_EXTS = new Set(Object.keys(ARTIFACT_MIME_MAP))
+		const artifacts = readdirSync(outputDir)
+			.filter((f) => TRACKED_EXTS.has(f.split(".").pop() ?? ""))
+			.map((filename) => {
+				const ext = filename.split(".").pop() ?? ""
+				return {
+					filename,
+					mediatype: ARTIFACT_MIME_MAP[ext] ?? "application/octet-stream",
+					sizebytes: statSync(join(outputDir, filename)).size,
+				}
+			})
+
+		return c.json({ artifacts })
+	})
 
 	// -----------------------------------------------------------------------
 	// Session routes

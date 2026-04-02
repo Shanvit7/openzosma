@@ -40,12 +40,7 @@ export const renderCsv = async (data: MonthlyReportData): Promise<Buffer> => {
 	sections.push(
 		renderTable(
 			["label", "value", "unit", "change"],
-			data.metrics.map((m) => [
-				m.label,
-				String(m.value),
-				m.unit ?? "",
-				m.change !== undefined ? String(m.change) : "",
-			]),
+			data.metrics.map((m) => [m.label, String(m.value), m.unit ?? "", m.change !== undefined ? String(m.change) : ""]),
 		),
 	)
 

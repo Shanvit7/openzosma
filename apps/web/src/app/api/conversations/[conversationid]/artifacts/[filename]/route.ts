@@ -32,7 +32,9 @@ export async function GET(
 	// Proxy to gateway
 	try {
 		const gatewayUrl = `${GATEWAY_URL}/api/v1/sessions/${conversationid}/artifacts/${encodeURIComponent(filename)}${queryString}`
-		const response = await fetch(gatewayUrl)
+		const response = await fetch(gatewayUrl, {
+			headers: { cookie: reqheaders.get("cookie") ?? "" },
+		})
 
 		if (!response.ok) {
 			return NextResponse.json({ error: "Artifact not found" }, { status: response.status })

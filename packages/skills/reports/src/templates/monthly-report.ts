@@ -76,7 +76,9 @@ const renderMonthlyReport = async (
 			return renderXlsx(data, opts)
 		case "png":
 		case "svg":
-			throw new Error(`Format '${format}' is not supported by the monthly-report template directly. Use report_execute_code to generate charts as standalone image files.`)
+			throw new Error(
+				`Format '${format}' is not supported by the monthly-report template directly. Use report_execute_code to generate charts as standalone image files.`,
+			)
 		default: {
 			const _exhaustive: never = format
 			throw new Error(`Unsupported format: ${String(_exhaustive)}`)

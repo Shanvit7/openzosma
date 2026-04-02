@@ -45,7 +45,8 @@ export const isPreviewable = (mediatype: string): boolean => {
 		mediatype === "text/plain" ||
 		mediatype === "text/markdown" ||
 		mediatype === "text/csv" ||
-		mediatype === "application/json"
+		mediatype === "application/json" ||
+		mediatype === "application/pdf"
 	)
 }
 

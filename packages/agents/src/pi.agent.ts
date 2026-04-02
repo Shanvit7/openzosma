@@ -11,7 +11,12 @@ import { createLogger } from "@openzosma/logger"
 import { bootstrapMemory } from "@openzosma/memory"
 import { DEFAULT_SYSTEM_PROMPT } from "./pi/config.js"
 import { resolveModel } from "./pi/model.js"
-import { createDefaultTools, createListDatabaseSchemasTool, createQueryDatabaseTool, createReportTools } from "./pi/tools.js"
+import {
+	createDefaultTools,
+	createListDatabaseSchemasTool,
+	createQueryDatabaseTool,
+	createReportTools,
+} from "./pi/tools.js"
 import type { AgentMessage, AgentProvider, AgentSession, AgentSessionOpts, AgentStreamEvent } from "./types.js"
 
 const log = createLogger({ component: "agents" })
@@ -52,7 +57,7 @@ class PiAgentSession implements AgentSession {
 			memoryDir: opts.memoryDir,
 		})
 		const toolList = [...createDefaultTools(opts.workspaceDir, opts.toolsEnabled)]
-		const reportTools = createReportTools(opts.toolsEnabled)
+		const reportTools = createReportTools(opts.toolsEnabled, opts.workspaceDir)
 		const customTools = [
 			...reportTools,
 			...(opts.dbPool ? [createQueryDatabaseTool(opts.dbPool), createListDatabaseSchemasTool(opts.dbPool)] : []),

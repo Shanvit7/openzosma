@@ -16,7 +16,7 @@ const textResult = (text: string): AgentToolResult<unknown> => ({
 	details: {},
 })
 
-const OUTPUT_DIR = "/workspace/output"
+const DEFAULT_OUTPUT_DIR = "/workspace/output"
 
 const MIME_MAP: Record<string, string> = {
 	png: "image/png",
@@ -37,7 +37,7 @@ const OUTPUT_EXTENSIONS = new Set(["png", "svg", "pdf", "pptx", "csv", "xlsx"])
  * Returns a JSON array of all registered report templates, including their
  * name, label, description, and supported output formats.
  */
-export const createReportListTemplatesTool = (): ToolDefinition => ({
+export const createReportListTemplatesTool = (_opts?: { outputDir?: string }): ToolDefinition => ({
 	name: "report_list_templates",
 	label: "List Report Templates",
 	description: "List all available report templates with their names, descriptions, and supported formats.",
@@ -58,16 +58,19 @@ export const createReportListTemplatesTool = (): ToolDefinition => ({
  * Create the report_generate tool.
  *
  * Validates the input data against the template's TypeBox schema, renders
- * the report, writes it to /workspace/output/, and returns the file path
+ * the report, writes it to the output directory, and returns the file path
  * and size.
+ *
+ * @param opts.outputDir - Override the output directory (default: /workspace/output).
  */
-export const createReportGenerateTool = (): ToolDefinition => ({
+export const createReportGenerateTool = (opts?: { outputDir?: string }): ToolDefinition => ({
 	name: "report_generate",
 	label: "Generate Report",
 	description:
-		"Generate a report from a registered template and structured data. " +
-		"Returns the file path and size of the generated report.",
-	promptSnippet: "report_generate(template, format, data) — render a report from a template",
+		"Generate a report or chart from a registered template and structured data. " +
+		"Use this tool (not matplotlib or custom code) whenever the user asks for a chart, graph, or report. " +
+		"Supports pdf, png, svg, xlsx, csv formats. Returns the file path and size of the generated artifact.",
+	promptSnippet: "report_generate(template, format, data) — preferred way to render charts and reports",
 	parameters: Type.Object({
 		template: Type.String({ description: "Template name, e.g. 'monthly-report'." }),
 		format: Type.Union(
@@ -118,12 +121,13 @@ export const createReportGenerateTool = (): ToolDefinition => ({
 			)
 		}
 
-		mkdirSync(OUTPUT_DIR, { recursive: true })
+		const outputDir = opts?.outputDir ?? DEFAULT_OUTPUT_DIR
+		mkdirSync(outputDir, { recursive: true })
 
-		const buffer = await template.render(p.format, p.data as unknown as MonthlyReportData, { outputDir: OUTPUT_DIR })
+		const buffer = await template.render(p.format, p.data as unknown as MonthlyReportData, { outputDir })
 
 		const filename = p.outputFilename ?? `${p.template}-${Date.now()}.${p.format}`
-		const outPath = `${OUTPUT_DIR}/${filename}`
+		const outPath = `${outputDir}/${filename}`
 		writeFileSync(outPath, buffer)
 
 		const sizeBytes = statSync(outPath).size
@@ -139,15 +143,15 @@ export const createReportGenerateTool = (): ToolDefinition => ({
  * inside /workspace, and returns paths to any generated output files together
  * with captured stdout.
  */
-export const createReportExecuteCodeTool = (): ToolDefinition => ({
+export const createReportExecuteCodeTool = (opts?: { outputDir?: string }): ToolDefinition => ({
 	name: "report_execute_code",
 	label: "Execute Report Code",
 	description:
-		"Execute Python or JavaScript code to generate charts, reports, or data visualizations. " +
-		"Code should save output files to /workspace/output/. " +
+		"Fallback tool: execute Python or JavaScript code to generate charts or reports when report_generate cannot satisfy the request. " +
+		"Code MUST save all output files to /workspace/output/ — files saved elsewhere will not appear as artifacts. " +
 		"Returns file paths and stdout.",
 	promptSnippet:
-		"report_execute_code(language, code, dependencies?, outputDir?) — run code that generates report files",
+		"report_execute_code(language, code, dependencies?, outputDir?) — fallback: run custom code that saves files to /workspace/output/",
 	parameters: Type.Object({
 		language: Type.Union([Type.Literal("python"), Type.Literal("javascript")], {
 			description: "Runtime to use.",
@@ -168,7 +172,7 @@ export const createReportExecuteCodeTool = (): ToolDefinition => ({
 			outputDir?: string
 		}
 
-		const outputDir = p.outputDir ?? OUTPUT_DIR
+		const outputDir = p.outputDir ?? opts?.outputDir ?? DEFAULT_OUTPUT_DIR
 		mkdirSync(outputDir, { recursive: true })
 
 		// Install dependencies
@@ -198,7 +202,17 @@ export const createReportExecuteCodeTool = (): ToolDefinition => ({
 		// Execute
 		let stdout = ""
 		try {
-			const runtime = p.language === "python" ? "python3" : "node"
+			const runtime =
+				p.language === "python"
+					? (() => {
+							try {
+								execFileSync("python3", ["--version"])
+								return "python3"
+							} catch {
+								return "python"
+							}
+						})()
+					: "node"
 			const result = execFileSync(runtime, [scriptPath], {
 				timeout: 60000,
 				cwd: "/workspace",

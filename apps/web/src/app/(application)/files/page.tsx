@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import React, { useCallback, useRef, useState } from "react"
 import { toast } from "sonner"
 
 // UI Components
@@ -354,16 +354,18 @@ const FilesPage = () => {
 							<Breadcrumb>
 								<BreadcrumbList>
 									{breadcrumbs.map((entry, i) => (
-										<BreadcrumbItem key={entry.path}>
+										<React.Fragment key={entry.path}>
 											{i > 0 && <BreadcrumbSeparator />}
-											{i === breadcrumbs.length - 1 ? (
-												<BreadcrumbPage>{entry.name}</BreadcrumbPage>
-											) : (
-												<BreadcrumbLink className="cursor-pointer" onClick={() => navigateToBreadcrumb(entry)}>
-													{entry.name}
-												</BreadcrumbLink>
-											)}
-										</BreadcrumbItem>
+											<BreadcrumbItem>
+												{i === breadcrumbs.length - 1 ? (
+													<BreadcrumbPage>{entry.name}</BreadcrumbPage>
+												) : (
+													<BreadcrumbLink className="cursor-pointer" onClick={() => navigateToBreadcrumb(entry)}>
+														{entry.name}
+													</BreadcrumbLink>
+												)}
+											</BreadcrumbItem>
+										</React.Fragment>
 									))}
 								</BreadcrumbList>
 							</Breadcrumb>

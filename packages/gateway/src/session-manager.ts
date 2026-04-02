@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import type { AgentProvider, AgentSession } from "@openzosma/agents"
 import { PiAgentProvider } from "@openzosma/agents"
@@ -239,6 +239,14 @@ export class SessionManager {
 
 	getSession(id: string): Session | undefined {
 		return this.sessions.get(id)?.session
+	}
+
+	/**
+	 * Return the workspace directory for a local-mode session, or undefined
+	 * when running in orchestrator mode or the session does not exist.
+	 */
+	getSessionWorkspaceDir(id: string): string | undefined {
+		return this.sessions.get(id)?.workspaceDir
 	}
 
 	deleteSession(id: string): boolean {
@@ -578,6 +586,8 @@ export class SessionManager {
 		let lastAssistantText = ""
 		let lastMessageId: string | undefined
 		const emitter = this.getEmitter(sessionId)
+		// Track files already seen so we only emit each artifact once per message.
+		const seenOutputFiles = new Set<string>()
 
 		for await (const event of agentSession.sendMessage(augmentedContent, signal)) {
 			const gatewayEvent: GatewayEvent = event as GatewayEvent
@@ -591,6 +601,17 @@ export class SessionManager {
 
 			emitter.emit("event", gatewayEvent)
 			yield gatewayEvent
+
+			// After each tool call completes, scan the output directory for new files
+			// and emit a file_output event so the frontend can display download links.
+			if (event.type === "tool_call_end") {
+				const newArtifacts = this.scanOutputDir(workspaceDir, seenOutputFiles)
+				if (newArtifacts.length > 0) {
+					const fileEvent: GatewayEvent = { type: "file_output", artifacts: newArtifacts }
+					emitter.emit("event", fileEvent)
+					yield fileEvent
+				}
+			}
 		}
 
 		// Store assistant message for session history
@@ -603,6 +624,53 @@ export class SessionManager {
 			}
 			session.messages.push(assistantMsg)
 		}
+	}
+
+	/**
+	 * Scan workspaceDir/output for files and return FileArtifact metadata.
+	 * Used in local mode to emit file_output events after tool calls.
+	 */
+	private scanOutputDir(workspaceDir: string, seenFiles: Set<string>): FileArtifact[] {
+		const outputDir = join(workspaceDir, "output")
+		if (!existsSync(outputDir)) return []
+
+		const MIME_MAP: Record<string, string> = {
+			png: "image/png",
+			svg: "image/svg+xml",
+			pdf: "application/pdf",
+			pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			csv: "text/csv",
+			xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		}
+		const TRACKED_EXTS = new Set(Object.keys(MIME_MAP))
+
+		// Copy new artifacts to the central user-files area so the Files page can list them
+		const workspaceRoot = resolve(process.env.OPENZOSMA_WORKSPACE ?? join(process.cwd(), "workspace"))
+		const userFilesDir = join(workspaceRoot, "user-files", "ai-generated")
+		mkdirSync(userFilesDir, { recursive: true })
+
+		const newArtifacts: FileArtifact[] = []
+		for (const filename of readdirSync(outputDir)) {
+			if (seenFiles.has(filename)) continue
+			const ext = filename.split(".").pop() ?? ""
+			if (!TRACKED_EXTS.has(ext)) continue
+			const filepath = join(outputDir, filename)
+			const sizebytes = statSync(filepath).size
+			seenFiles.add(filename)
+			newArtifacts.push({
+				filename,
+				mediatype: MIME_MAP[ext] ?? "application/octet-stream",
+				sizebytes,
+			})
+
+			// Non-fatal: artifact card in chat still works via the session artifact route
+			try {
+				copyFileSync(filepath, join(userFilesDir, filename))
+			} catch {
+				/* ignore */
+			}
+		}
+		return newArtifacts
 	}
 
 	/**

@@ -1,9 +1,7 @@
-import ReactPDF from "@react-pdf/renderer"
+import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer"
 import React from "react"
 import type { MonthlyReportData, RenderOpts } from "../templates/types.js"
 import { renderChart } from "./chart.js"
-
-const { Document, Page, View, Text, Image, StyleSheet, renderToBuffer } = ReactPDF
 
 const styles = StyleSheet.create({
 	page: {
@@ -114,9 +112,7 @@ export const renderPdf = async (data: MonthlyReportData, _opts?: RenderOpts): Pr
 			),
 		)
 
-		page1Rows.push(
-			React.createElement(View, { key: "metricsTable" }, metricHeaderRow, ...metricDataRows),
-		)
+		page1Rows.push(React.createElement(View, { key: "metricsTable" }, metricHeaderRow, ...metricDataRows))
 	}
 
 	children.push(React.createElement(Page, { key: "p1", size: "A4", style: styles.page }, ...page1Rows))

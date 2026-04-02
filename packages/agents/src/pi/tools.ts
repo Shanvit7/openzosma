@@ -71,12 +71,15 @@ export const createDefaultTools = (workspaceDir: string, toolsEnabled?: string[]
  * These go in `customTools` when calling createAgentSession.
  *
  * @param toolsEnabled - Optional allow-list of tool names. If omitted, all report tools are returned.
+ * @param workspaceDir - Workspace root; report output will go to <workspaceDir>/output.
+ *                       Defaults to /workspace/output when omitted (sandbox mode).
  */
-export const createReportTools = (toolsEnabled?: string[]): ToolDefinition[] => {
+export const createReportTools = (toolsEnabled?: string[], workspaceDir?: string): ToolDefinition[] => {
+	const outputDir = workspaceDir ? `${workspaceDir}/output` : undefined
 	const allTools = [
-		{ name: "report_list_templates" as CustomToolName, tool: createReportListTemplatesTool() },
-		{ name: "report_generate" as CustomToolName, tool: createReportGenerateTool() },
-		{ name: "report_execute_code" as CustomToolName, tool: createReportExecuteCodeTool() },
+		{ name: "report_list_templates" as CustomToolName, tool: createReportListTemplatesTool({ outputDir }) },
+		{ name: "report_generate" as CustomToolName, tool: createReportGenerateTool({ outputDir }) },
+		{ name: "report_execute_code" as CustomToolName, tool: createReportExecuteCodeTool({ outputDir }) },
 	]
 
 	if (!toolsEnabled || toolsEnabled.length === 0) {
