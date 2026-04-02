@@ -165,9 +165,7 @@ export class OrchestratorSessionManager {
 
 			const skillsPrefix = buildSkillsPrefix(skills)
 			if (skillsPrefix) {
-				agentConfig.systemPromptPrefix = [skillsPrefix, agentConfig.systemPromptPrefix]
-					.filter(Boolean)
-					.join("\n\n")
+				agentConfig.systemPromptPrefix = [skillsPrefix, agentConfig.systemPromptPrefix].filter(Boolean).join("\n\n")
 			}
 		}
 

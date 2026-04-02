@@ -114,8 +114,8 @@ export interface Skill {
 	id: string
 	name: string
 	description: string
-	type: 'builtin' | 'marketplace' | 'custom'
-	source: 'file' | 'npm'
+	type: "builtin" | "marketplace" | "custom"
+	source: "file" | "npm"
 	content: string | null
 	packageSpecifier: string | null
 	config: { requires?: string[]; envVars?: string[] }

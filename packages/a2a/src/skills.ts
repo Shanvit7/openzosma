@@ -29,10 +29,7 @@ export const SKILL_METADATA: Record<string, Omit<AgentSkill, "id">> = {
  * for full skill records and falls back to the static SKILL_METADATA
  * map when the DB is unavailable or a skill isn't found.
  */
-export const resolveSkillsMetadata = async (
-	pool: Pool,
-	skillIds: string[],
-): Promise<AgentSkill[]> => {
+export const resolveSkillsMetadata = async (pool: Pool, skillIds: string[]): Promise<AgentSkill[]> => {
 	if (skillIds.length === 0) return []
 
 	try {

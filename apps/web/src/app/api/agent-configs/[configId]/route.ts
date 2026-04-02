@@ -6,10 +6,7 @@ import { type NextRequest, NextResponse } from "next/server"
 type RouteParams = { params: Promise<{ configId: string }> }
 
 // GET /api/agent-configs/:configId
-export async function GET(
-	_request: NextRequest,
-	{ params }: RouteParams,
-) {
+export async function GET(_request: NextRequest, { params }: RouteParams) {
 	const session = await auth.api.getSession({ headers: await headers() })
 	if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
@@ -27,10 +24,7 @@ export async function GET(
 }
 
 // PUT /api/agent-configs/:configId
-export async function PUT(
-	request: NextRequest,
-	{ params }: RouteParams,
-) {
+export async function PUT(request: NextRequest, { params }: RouteParams) {
 	const session = await auth.api.getSession({ headers: await headers() })
 	if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
@@ -49,15 +43,42 @@ export async function PUT(
 		const values: unknown[] = []
 		let paramIndex = 1
 
-		if (name !== undefined) { fields.push(`name = $${paramIndex++}`); values.push(name) }
-		if (description !== undefined) { fields.push(`description = $${paramIndex++}`); values.push(description) }
-		if (model !== undefined) { fields.push(`model = $${paramIndex++}`); values.push(model) }
-		if (provider !== undefined) { fields.push(`provider = $${paramIndex++}`); values.push(provider) }
-		if (systemPrompt !== undefined) { fields.push(`system_prompt = $${paramIndex++}`); values.push(systemPrompt) }
-		if (toolsEnabled !== undefined) { fields.push(`tools_enabled = $${paramIndex++}`); values.push(JSON.stringify(toolsEnabled)) }
-		if (skills !== undefined) { fields.push(`skills = $${paramIndex++}`); values.push(JSON.stringify(skills)) }
-		if (maxTokens !== undefined) { fields.push(`max_tokens = $${paramIndex++}`); values.push(maxTokens) }
-		if (temperature !== undefined) { fields.push(`temperature = $${paramIndex++}`); values.push(temperature) }
+		if (name !== undefined) {
+			fields.push(`name = $${paramIndex++}`)
+			values.push(name)
+		}
+		if (description !== undefined) {
+			fields.push(`description = $${paramIndex++}`)
+			values.push(description)
+		}
+		if (model !== undefined) {
+			fields.push(`model = $${paramIndex++}`)
+			values.push(model)
+		}
+		if (provider !== undefined) {
+			fields.push(`provider = $${paramIndex++}`)
+			values.push(provider)
+		}
+		if (systemPrompt !== undefined) {
+			fields.push(`system_prompt = $${paramIndex++}`)
+			values.push(systemPrompt)
+		}
+		if (toolsEnabled !== undefined) {
+			fields.push(`tools_enabled = $${paramIndex++}`)
+			values.push(JSON.stringify(toolsEnabled))
+		}
+		if (skills !== undefined) {
+			fields.push(`skills = $${paramIndex++}`)
+			values.push(JSON.stringify(skills))
+		}
+		if (maxTokens !== undefined) {
+			fields.push(`max_tokens = $${paramIndex++}`)
+			values.push(maxTokens)
+		}
+		if (temperature !== undefined) {
+			fields.push(`temperature = $${paramIndex++}`)
+			values.push(temperature)
+		}
 
 		if (fields.length === 0) {
 			return NextResponse.json({ error: "No fields to update" }, { status: 400 })

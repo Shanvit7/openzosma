@@ -4,10 +4,7 @@ import type { Skill } from "../types.js"
 /**
  * List skills with optional filters. Supports filtering by type, installedBy, or both.
  */
-export const listSkills = async (
-	pool: pg.Pool,
-	opts?: { type?: string; installedBy?: string },
-): Promise<Skill[]> => {
+export const listSkills = async (pool: pg.Pool, opts?: { type?: string; installedBy?: string }): Promise<Skill[]> => {
 	const conditions: string[] = []
 	const values: unknown[] = []
 	let paramIndex = 1
@@ -56,9 +53,9 @@ export const createSkill = async (
 		 RETURNING *`,
 		[
 			data.name,
-			data.description ?? '',
-			data.type ?? 'custom',
-			data.source ?? 'file',
+			data.description ?? "",
+			data.type ?? "custom",
+			data.source ?? "file",
 			data.content ?? null,
 			data.packageSpecifier ?? null,
 			JSON.stringify(data.config ?? {}),
@@ -140,8 +137,8 @@ const mapSkill = (row: Record<string, unknown>): Skill => ({
 	id: row.id as string,
 	name: row.name as string,
 	description: row.description as string,
-	type: row.type as 'builtin' | 'marketplace' | 'custom',
-	source: row.source as 'file' | 'npm',
+	type: row.type as "builtin" | "marketplace" | "custom",
+	source: row.source as "file" | "npm",
 	content: row.content as string | null,
 	packageSpecifier: row.package_specifier as string | null,
 	config: row.config as { requires?: string[]; envVars?: string[] },
