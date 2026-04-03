@@ -17,9 +17,27 @@
 # =============================================================================
 
 # ---------------------------------------------------------------------------
-# Stage 1: Build sandbox-server and produce a deployable bundle
+# Stage 1: Build sandbox-server and produce a deployable bundle.
+# Also pre-builds all native npm globals here so the runtime stage does not
+# need a C/C++ toolchain.
 # ---------------------------------------------------------------------------
 FROM node:22-slim AS builder
+
+# Build-time system dependencies:
+# - build-essential / g++ / make / pkg-config: required by node-gyp for native modules
+# - *-dev packages: header files needed to compile canvas (cairo, gif, jpeg, pango, rsvg)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    g++ \
+    libcairo2-dev \
+    libgif-dev \
+    libjpeg-dev \
+    libpango1.0-dev \
+    librsvg2-dev \
+    make \
+    pkg-config \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
 
@@ -53,32 +71,46 @@ RUN pnpm --filter @openzosma/sandbox-server deploy /deploy --prod --legacy
 # Copy built dist into the deploy directory
 RUN cp -r packages/sandbox-server/dist /deploy/dist
 
+# Pre-build all global npm packages that contain native modules or are large.
+# Installing here (with the toolchain present) means the runtime stage only
+# needs to COPY the pre-compiled /usr/local/lib/node_modules directory —
+# no compiler required at runtime.
+RUN npm install -g \
+    @mariozechner/pi-coding-agent \
+    agent-slack \
+    chart.js \
+    chartjs-node-canvas \
+    d3 \
+    exceljs
+
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime
 # ---------------------------------------------------------------------------
 FROM node:22-slim
 
-# Install runtime dependencies and developer tools.
-# iproute2 is required by the OpenShell sandbox supervisor for network namespace creation.
-# python3-venv provides virtualenv support for isolated Python environments.
-# tree, jq, wget, less, unzip, zip are general-purpose CLI tools the agent can use.
-# make + g++ are required for native npm modules that use node-gyp.
-# Node.js and npm are already present from the node:22-slim base image.
+# Runtime system dependencies only — no compiler toolchain, no *-dev headers.
+#
+# Shared libraries required by pre-compiled native modules (e.g. canvas):
+#   libcairo2, libgif7, libjpeg62-turbo, libpango-1.0-0, libpangocairo-1.0-0,
+#   librsvg2-2 — these are the runtime counterparts of the *-dev packages used
+#   in the builder stage.
+#
+# iproute2: required by the OpenShell sandbox supervisor for network namespace creation.
+# python3 / python3-pip / python3-venv: agent-generated Python code + report generation.
+# tini: PID 1 / signal handling.
+# git, curl, wget, jq, less, tree, unzip, zip: general-purpose CLI tools for the agent.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     curl \
-    g++ \
     git \
     iproute2 \
     jq \
     less \
-    libcairo2-dev \
-    libgif-dev \
-    libjpeg-dev \
-    libpango1.0-dev \
-    librsvg2-dev \
-    make \
-    pkg-config \
+    libcairo2 \
+    libgif7 \
+    libjpeg62-turbo \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    librsvg2-2 \
     python3 \
     python3-pip \
     python3-venv \
@@ -112,14 +144,12 @@ WORKDIR /app
 # Copy the self-contained deploy bundle (node_modules + dist, no symlinks)
 COPY --from=builder /deploy ./
 
-RUN npm install -g @mariozechner/pi-coding-agent
-
-# Install agent-slack CLI so the agent can query Slack from inside the sandbox.
-# The CLI reads SLACK_TOKEN from the environment (injected via .env by the orchestrator).
-RUN npm install -g agent-slack
-
-# Install Node report libraries available to agent-generated code.
-RUN npm install -g chart.js chartjs-node-canvas d3 exceljs
+# Copy pre-compiled global npm packages from the builder stage.
+# All native modules (e.g. canvas inside chartjs-node-canvas) were compiled
+# there with the full toolchain. The runtime stage needs only the shared libs
+# (installed above), not the compiler.
+COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy extension manifest and install script before switching to sandbox user
 COPY packages/agents/extensions.json /tmp/extensions.json
