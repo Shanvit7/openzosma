@@ -1,0 +1,52 @@
+{
+	"name": "zosma-mem",
+	"version": "0.0.1",
+	"private": false,
+	"type": "module",
+	"description": "Standalone CLI for evaluating agentic memory systems - zero-config evaluation against standardized scenarios",
+	"license": "Apache-2.0",
+	"keywords": ["memory", "evaluation", "ai", "agentic", "cli", "openzosma"],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/your-org/openzosma",
+		"directory": "packages/zosma-mem"
+	},
+	"homepage": "https://github.com/your-org/openzosma/tree/main/packages/zosma-mem",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"bin": {
+		"zosma-mem": "dist/evals/cli/simple-eval.js"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./evals": {
+			"types": "./dist/evals/index.d.ts",
+			"import": "./dist/evals/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc",
+		"check": "tsc --noEmit",
+		"test": "vitest --run",
+		"eval": "tsx dist/evals/cli/simple-eval.js",
+		"prepublishOnly": "pnpm run build && pnpm run test"
+	},
+	"dependencies": {
+		"chalk": "^5.4.0",
+		"commander": "^13.0.0",
+		"ink": "^5.1.0",
+		"ink-spinner": "^5.0.0",
+		"react": "^18.3.0",
+		"zod": "^3.23.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.15.2",
+		"@types/react": "^18.3.0",
+		"tsx": "^4.0.0",
+		"typescript": "^5.7.3",
+		"vitest": "^3.0.0"
+	}
+}
