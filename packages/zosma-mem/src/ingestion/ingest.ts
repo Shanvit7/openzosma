@@ -5,6 +5,11 @@ import type { MemoryConfig, MemoryEntity, MemoryEvent } from "../types.js"
 /**
  * Ingest a MemoryEvent. Always persists (upsert). The threshold is enforced
  * during GC pruning, not at ingestion time — every event type is stored.
+ *
+ * Conflict resolution: when re-ingesting an existing entity with changed
+ * content, `lastAccessed` is refreshed so the updated version ranks above
+ * the stale version in time-sensitive queries.
+ *
  * Returns true always (kept for interface compatibility).
  */
 export const ingest = (
@@ -14,7 +19,14 @@ export const ingest = (
 ): boolean => {
 	const nowFn = config.now ?? Date.now
 	const existing = store.read(event.id)
-	const score = existing?.score ?? initialScore(event.type, nowFn)
+
+	let score = existing?.score ?? initialScore(event.type, nowFn)
+
+	// Conflict resolution: if content changed, treat the entity as freshly
+	// accessed so its time-decay resets and it outranks the stale version.
+	if (existing && existing.content !== event.content) {
+		score = { ...score, lastAccessed: nowFn(), belowThresholdCycles: 0 }
+	}
 
 	const entity: MemoryEntity = {
 		id: event.id,
