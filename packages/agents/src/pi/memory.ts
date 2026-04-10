@@ -8,35 +8,30 @@
 
 import { completeSimple } from "@mariozechner/pi-ai"
 import type { Api, Model } from "@mariozechner/pi-ai"
-import { createLogger } from "@openzosma/logger"
 import type { ExtractedFact } from "@openzosma/zosma-mem/bridge"
 
-const log = createLogger({ component: "agents:memory" })
+const EXTRACTION_SYSTEM_PROMPT = `You are extracting user preferences and facts from conversations for long-term memory.
 
-const EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction assistant. Your job is to identify facts worth
-remembering long-term from a conversation exchange.
+CRITICAL RULES:
+1. Extract EVERY user preference as a separate fact, even if they seem related
+2. "Favorite X" and "love/like Y" are ALWAYS separate facts, even if both are animals
+3. Personal statements like "I love X" or "My favorite is Y" become facts
+4. Each fact must be self-contained and specific
+5. Tags MUST include semantic action words like "like", "love", "hate", "favorite", "prefer"
+   so the fact can be retrieved by queries like "what do I like?" or "whom do I like?"
 
-Extract facts that are:
-- User preferences (favorite things, dislikes, habits)
-- Decisions made by the user
-- Constraints or rules the user has stated
-- Personal information the user shared
-- Repeating patterns or explicit instructions
+EXAMPLES:
+- User says "My favorite animal is elephant" → content: "User's favorite animal is elephant", tags: ["animal", "favorite", "elephant"]
+- User says "I love the lion" → content: "User loves lions", tags: ["animal", "love", "lion"]
+- User says "I hate snakes" → content: "User hates snakes", tags: ["animal", "hate", "snake"]
+- User says "I like Messi" → content: "User likes Messi", tags: ["messi", "like", "football", "person"]
 
-Do NOT extract:
-- Facts that are only relevant to the current task
-- Temporary states ("I'm tired today")
-- Questions without answers
-- Generic statements that apply to everyone
+Extract as JSON array with:
+- "content": third-person statement (e.g. "User's favorite animal is elephant")
+- "type": "preference"
+- "tags": array of lowercase keywords INCLUDING the relationship word (like/love/hate/favorite/prefer)
 
-Return a JSON array. Each element must be an object with:
-- "content": a self-contained, third-person statement of the fact (e.g. "User's favorite animal is elephant")
-- "type": one of "preference" | "decision" | "pattern" | "error"
-- "tags": array of 2-5 lowercase keywords
-
-If nothing is worth remembering, return an empty array: []
-
-Respond with ONLY the JSON array. No explanation, no markdown fences.`
+Return [] if nothing memorable. ONLY return the raw JSON array, no markdown formatting.`
 
 /**
  * Use the active LLM to extract memorable facts from a single conversation turn.
@@ -48,7 +43,9 @@ export const extractFacts = async (
   userMessage: string,
   assistantResponse: string,
 ): Promise<ExtractedFact[]> => {
-  if (!userMessage.trim() || !assistantResponse.trim()) return []
+  if (!userMessage.trim() || !assistantResponse.trim()) {
+    return []
+  }
 
   const prompt = `User: ${userMessage}\n\nAssistant: ${assistantResponse}`
 
@@ -68,13 +65,19 @@ export const extractFacts = async (
       .join("")
       .trim()
 
-    if (!text) return []
+    if (!text) {
+      return []
+    }
 
-    const parsed: unknown = JSON.parse(text)
+    // Strip markdown code fences that some models wrap around JSON output.
+    const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim()
+    const parsed: unknown = JSON.parse(stripped)
 
-    if (!Array.isArray(parsed)) return []
+    if (!Array.isArray(parsed)) {
+      return []
+    }
 
-    return parsed.filter(
+    const validFacts = parsed.filter(
       (item): item is ExtractedFact =>
         typeof item === "object" &&
         item !== null &&
@@ -82,10 +85,9 @@ export const extractFacts = async (
         ["preference", "decision", "pattern", "error"].includes((item as Record<string, unknown>).type as string) &&
         Array.isArray((item as Record<string, unknown>).tags),
     )
+
+    return validFacts
   } catch (err) {
-    log.warn("Memory extraction failed (non-fatal)", {
-      error: err instanceof Error ? err.message : String(err),
-    })
     return []
   }
 }

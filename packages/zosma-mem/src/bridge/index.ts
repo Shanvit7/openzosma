@@ -72,7 +72,7 @@ export interface MemoryBridge {
  * it hashes to the same ID, so the engine deduplicates it by updating in place.
  */
 export const factId = (content: string): string =>
-  createHash("sha256").update(content.trim().toLowerCase()).digest("hex").slice(0, 16)
+  createHash("sha256").update(content.trim().toLowerCase().replace(/\s+/g, ' ')).digest("hex").slice(0, 16)
 
 /**
  * Format retrieved memories as a system prompt section.
